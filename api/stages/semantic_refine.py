@@ -1,16 +1,23 @@
 """Stage 3.5: LLM-powered semantic block refinement.
 
-Segments the block grid into spatial regions, describes each to an LLM,
-and applies the LLM's block choices. Runs between block_mapper and
-schema_export.
+Two-phase approach:
+1. **Spatial clustering**: flood-fill connected components of similar color
+   in the voxel grid, producing spatially coherent regions (walls, roofs,
+   pillars, etc.) instead of scattered per-block noise.
+2. **LLM assignment**: each region is described to the LLM by its centroid
+   position, bounding box, average color, structural role (foundation /
+   wall / roof / detail), and neighbor regions. The LLM picks ONE block
+   type per region, so the result is clean uniform sections.
 
-The LLM never sees raw voxel data -- it gets a compact text description
-of each region (position, size, dominant colors, current blocks, structural
-role) and returns a JSON mapping of region_id -> minecraft block_id.
+Before the LLM call, a smoothing pass already unifies each spatial cluster
+to its dominant block type, which alone eliminates most of the "noisy
+random colors" problem. The LLM then upgrades materials (e.g. generic
+stone -> stone bricks for walls, oak planks -> spruce planks for dark
+areas).
 """
 
 import json
-from collections import Counter
+from collections import Counter, deque
 from typing import Optional
 
 import numpy as np
@@ -22,7 +29,104 @@ from api.utils.logging import get_logger
 log = get_logger(__name__)
 
 MAX_REGIONS = 20
-MIN_REGION_SIZE = 50
+MIN_REGION_BLOCKS = 50
+COLOR_SIMILARITY_THRESHOLD = 55.0
+_MAX_COLOR_DISTANCE = 220.0
+_MERGE_COLOR_THRESHOLD = 40.0
+
+
+def prepare(
+    block_grid: BlockGrid,
+    voxel_grid: VoxelGrid,
+    config: PipelineConfig,
+    description: Optional[str] = None,
+) -> Optional[dict]:
+    """Run clustering + smoothing and return prompt data without calling an LLM.
+
+    Returns None if no regions found, otherwise a dict with:
+      prompt, regions, label_map, block_grid (smoothed)
+    """
+    all_regions, label_map = _segment_regions_spatial(block_grid, voxel_grid)
+    if not all_regions:
+        return None
+
+    block_grid, _ = _smooth_regions(block_grid, all_regions, label_map)
+    block_grid = _smooth_remaining_by_neighbors(block_grid, label_map, all_regions)
+
+    llm_regions = all_regions[:MAX_REGIONS]
+    _compute_adjacency(llm_regions)
+
+    occupied = {b.position for b in block_grid.blocks}
+    for r in llm_regions:
+        r["structure"] = _analyze_region_structure(r, occupied, block_grid.dimensions)
+
+    prompt = _build_prompt(llm_regions, description)
+
+    return {
+        "prompt": prompt,
+        "regions": llm_regions,
+        "label_map": label_map,
+        "block_grid": block_grid,
+    }
+
+
+def apply_response(
+    raw_response: str,
+    prepared: dict,
+) -> tuple[BlockGrid, dict]:
+    """Apply a raw LLM response (from any source) to a prepared block grid.
+
+    Returns (block_grid, llm_info) same as run().
+    """
+    regions = prepared["regions"]
+    label_map = prepared["label_map"]
+    block_grid = prepared["block_grid"]
+
+    llm_info = {
+        "provider": "manual",
+        "model": "user-pasted",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "regions": [
+            {
+                "id": r["id"],
+                "count": r["count"],
+                "band": r["structural_role"],
+                "avg_rgb": r["avg_rgb"],
+                "blocks": [b["id"].replace("minecraft:", "") for b in r["current_blocks"]],
+            }
+            for r in regions
+        ],
+        "decisions": {},
+        "blocks_changed": 0,
+        "status": "running",
+        "prompt_chars": len(prepared["prompt"]),
+        "prompt_preview": prepared["prompt"][:500],
+        "response_preview": raw_response[:500],
+    }
+
+    block_assignments, ops_by_region = _parse_response(raw_response, regions)
+    if not block_assignments and not ops_by_region:
+        llm_info["status"] = "no_valid_assignments"
+        return block_grid, llm_info
+
+    if block_assignments:
+        llm_info["decisions"] = {
+            k: v.replace("minecraft:", "") for k, v in block_assignments.items()
+        }
+        block_grid = _apply_assignments(block_grid, regions, label_map, block_assignments)
+        llm_info["blocks_changed"] = sum(
+            1 for b in block_grid.blocks if b.reason.startswith("llm_refine")
+        )
+
+    if ops_by_region:
+        struct_summary = apply_structural_ops(
+            block_grid, regions, label_map, ops_by_region, block_assignments,
+        )
+        llm_info["structural_ops"] = struct_summary
+
+    llm_info["status"] = "ok"
+    return block_grid, llm_info
 
 
 def run(
@@ -33,11 +137,7 @@ def run(
     provider: str = "gemini",
     description: Optional[str] = None,
 ) -> tuple:
-    """Refine block choices using an LLM.
-
-    Returns (block_grid, llm_info) where llm_info contains thinking,
-    token usage, and decisions for the UI.
-    """
+    """Refine block choices using spatial clustering + LLM."""
     import api.llm as llm
 
     llm_info = {
@@ -51,17 +151,29 @@ def run(
         "status": "running",
     }
 
-    regions = _segment_regions(block_grid, voxel_grid)
-    if not regions:
+    all_regions, label_map = _segment_regions_spatial(block_grid, voxel_grid)
+    if not all_regions:
         log.warning("No regions segmented, skipping LLM refinement")
         llm_info["status"] = "skipped"
         return block_grid, llm_info
 
-    log.info(f"Segmented {len(regions)} regions")
+    log.info(f"Spatial clustering produced {len(all_regions)} regions")
+
+    block_grid, pre_smoothed = _smooth_regions(block_grid, all_regions, label_map)
+    log.info(f"Pre-LLM smoothing unified {pre_smoothed} blocks")
+    block_grid = _smooth_remaining_by_neighbors(block_grid, label_map, all_regions)
+
+    regions = all_regions[:MAX_REGIONS]
+    _compute_adjacency(regions)
+
     llm_info["regions"] = [
-        {"id": r["id"], "count": r["count"], "band": r["height_band"],
-         "avg_rgb": r["avg_rgb"],
-         "blocks": [b["id"].replace("minecraft:", "") for b in r["current_blocks"]]}
+        {
+            "id": r["id"],
+            "count": r["count"],
+            "band": r["structural_role"],
+            "avg_rgb": r["avg_rgb"],
+            "blocks": [b["id"].replace("minecraft:", "") for b in r["current_blocks"]],
+        }
         for r in regions
     ]
 
@@ -71,7 +183,7 @@ def run(
     try:
         result = llm.call(prompt, provider=provider, api_key=api_key)
     except Exception as e:
-        log.warning(f"LLM call failed ({e}), keeping original blocks")
+        log.warning(f"LLM call failed ({e}), keeping smoothed blocks")
         llm_info["status"] = f"error: {e}"
         return block_grid, llm_info
 
@@ -85,197 +197,536 @@ def run(
 
     raw = result["text"]
     llm_info["response_preview"] = raw[:500]
-    assignments = _parse_response(raw, regions)
+    block_assignments, ops_by_region = _parse_response(raw, regions)
 
-    if not assignments:
-        log.warning("LLM returned no valid assignments, keeping original blocks")
-        llm_info["status"] = "no_changes"
+    if not block_assignments and not ops_by_region:
+        log.warning("LLM returned no valid assignments, keeping smoothed blocks")
+        llm_info["status"] = "smoothed_only"
         return block_grid, llm_info
 
-    decisions = {}
-    for k, v in assignments.items():
-        if isinstance(v, str):
-            decisions[k] = v.replace("minecraft:", "")
-        elif isinstance(v, dict):
-            decisions[k] = " | ".join(
-                f"{old.replace('minecraft:', '')} \u2192 {new.replace('minecraft:', '')}"
-                for old, new in v.items()
-            )
-    llm_info["decisions"] = decisions
+    if block_assignments:
+        llm_info["decisions"] = {
+            k: v.replace("minecraft:", "") for k, v in block_assignments.items()
+        }
+        block_grid = _apply_assignments(block_grid, regions, label_map, block_assignments)
+        llm_info["blocks_changed"] = sum(
+            1 for b in block_grid.blocks if b.reason.startswith("llm_refine")
+        )
 
-    block_grid = _apply_assignments(block_grid, regions, assignments)
-    llm_info["blocks_changed"] = sum(
-        1 for b in block_grid.blocks if b.reason.startswith("llm_refine")
-    )
+    if ops_by_region:
+        struct_summary = apply_structural_ops(
+            block_grid, regions, label_map, ops_by_region, block_assignments or {},
+        )
+        llm_info["structural_ops"] = struct_summary
+
     llm_info["status"] = "ok"
 
-    log.info(f"LLM refined {len(assignments)} regions, {llm_info['blocks_changed']} blocks changed")
+    log.info(f"LLM refined {len(block_assignments)} blocks, {len(ops_by_region)} structural ops")
     return block_grid, llm_info
 
 
-def _segment_regions(block_grid: BlockGrid, voxel_grid: VoxelGrid) -> list[dict]:
-    """Divide the block grid into spatial regions using Y-slicing + color clustering.
+def _segment_regions_spatial(
+    block_grid: BlockGrid, voxel_grid: VoxelGrid
+) -> tuple[list[dict], dict[tuple, int]]:
+    """Flood-fill connected components by block ID in the mapped grid.
 
-    Strategy: split vertically into bands (foundation, lower, middle, upper, top),
-    then within each band, group by dominant block type. This gives the LLM
-    structurally meaningful regions without expensive spatial clustering.
+    Two blocks are in the same component if they are 6-connected neighbors
+    AND share the same block_id. This produces clean regions that match the
+    already-discretized palette assignments — no color threshold fuzziness.
+
+    After the initial flood-fill, a multi-pass merge strategy ensures that
+    the vast majority of blocks end up in a labeled region:
+    1. Tiny regions (< MIN_REGION_BLOCKS) get absorbed into their largest neighbor
+    2. Adjacent regions with the same dominant block get consolidated
+    3. Any remaining orphan blocks get assigned to their nearest neighbor region
     """
+    grid = voxel_grid.grid
     dx, dy, dz = block_grid.dimensions
-    if dy == 0:
-        return []
 
-    y_bands = _compute_y_bands(dy)
     block_by_pos = {b.position: b for b in block_grid.blocks}
+    occupied = set(block_by_pos.keys())
 
-    regions = []
-    for band_name, y_lo, y_hi in y_bands:
-        band_blocks = [b for b in block_grid.blocks if y_lo <= b.position[1] < y_hi]
-        if len(band_blocks) < MIN_REGION_SIZE:
-            if band_blocks:
-                regions.append(_describe_region(
-                    f"{band_name}", band_blocks, voxel_grid, y_lo, y_hi))
+    color_at: dict[tuple, np.ndarray] = {}
+    for b in block_grid.blocks:
+        pos = b.position
+        x, y, z = pos
+        if x < grid.shape[0] and y < grid.shape[1] and z < grid.shape[2]:
+            color_at[pos] = grid[x, y, z, :3].astype(float)
+        else:
+            color_at[pos] = np.array([128.0, 128.0, 128.0])
+
+    label_map: dict[tuple, int] = {}
+    region_id = 0
+    region_positions: dict[int, list[tuple]] = {}
+
+    neighbors_6 = [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
+
+    for pos in occupied:
+        if pos in label_map:
             continue
 
-        type_counts = Counter(b.block_id for b in band_blocks)
-        dominant_types = [bid for bid, _ in type_counts.most_common(3)]
+        seed_block_id = block_by_pos[pos].block_id
+        queue = deque([pos])
+        label_map[pos] = region_id
+        component = [pos]
 
-        for bid in dominant_types:
-            group = [b for b in band_blocks if b.block_id == bid]
-            if len(group) < MIN_REGION_SIZE:
-                continue
-            regions.append(_describe_region(
-                f"{band_name}_{bid.replace('minecraft:', '')}",
-                group, voxel_grid, y_lo, y_hi,
-            ))
+        while queue:
+            cx, cy, cz = queue.popleft()
+            for nx, ny, nz in neighbors_6:
+                npos = (cx + nx, cy + ny, cz + nz)
+                if npos not in occupied or npos in label_map:
+                    continue
+                if block_by_pos[npos].block_id == seed_block_id:
+                    label_map[npos] = region_id
+                    component.append(npos)
+                    queue.append(npos)
 
-        others = [b for b in band_blocks if b.block_id not in dominant_types]
-        if len(others) >= MIN_REGION_SIZE:
-            regions.append(_describe_region(
-                f"{band_name}_misc", others, voxel_grid, y_lo, y_hi))
+        region_positions[region_id] = component
+        region_id += 1
 
-    regions.sort(key=lambda r: -r["count"])
-    return regions[:MAX_REGIONS]
+    raw_regions: list[tuple[int, list[tuple]]] = sorted(
+        region_positions.items(), key=lambda kv: -len(kv[1])
+    )
+
+    merged_label_map = dict(label_map)
+    tiny_absorbed = 0
+    for rid, positions in raw_regions:
+        if len(positions) >= MIN_REGION_BLOCKS:
+            continue
+        best_neighbor = _find_largest_neighbor(positions, label_map, region_positions, rid)
+        if best_neighbor is not None:
+            for p in positions:
+                merged_label_map[p] = best_neighbor
+            region_positions[best_neighbor].extend(positions)
+            region_positions[rid] = []
+            tiny_absorbed += 1
+
+    label_map = merged_label_map
+    if tiny_absorbed:
+        log.info(f"Absorbed {tiny_absorbed} tiny regions into neighbors")
+
+    label_map, region_positions, merge_count = _consolidate_similar_regions(
+        label_map, region_positions, color_at,
+    )
+    if merge_count:
+        log.info(f"Consolidated {merge_count} color-similar adjacent regions")
+
+    orphans = [p for p in occupied if label_map.get(p) is not None
+               and len(region_positions.get(label_map[p], [])) < MIN_REGION_BLOCKS]
+    orphan_fixed = 0
+    for pos in orphans:
+        x, y, z = pos
+        neighbor_regions: Counter = Counter()
+        for nx, ny, nz in neighbors_6:
+            npos = (x + nx, y + ny, z + nz)
+            nrid = label_map.get(npos)
+            if nrid is not None and len(region_positions.get(nrid, [])) >= MIN_REGION_BLOCKS:
+                neighbor_regions[nrid] += 1
+        if neighbor_regions:
+            best = neighbor_regions.most_common(1)[0][0]
+            old_rid = label_map[pos]
+            label_map[pos] = best
+            region_positions[best].append(pos)
+            orphan_fixed += 1
+    if orphan_fixed:
+        log.info(f"Re-assigned {orphan_fixed} orphan blocks to neighbor regions")
+
+    all_regions = []
+    for rid, positions in sorted(region_positions.items(), key=lambda kv: -len(kv[1])):
+        if len(positions) < MIN_REGION_BLOCKS:
+            continue
+
+        blocks_in_region = [block_by_pos[p] for p in positions if p in block_by_pos]
+        if not blocks_in_region:
+            continue
+
+        pos_arr = np.array(positions)
+        centroid = pos_arr.mean(axis=0)
+        bbox_min = pos_arr.min(axis=0)
+        bbox_max = pos_arr.max(axis=0)
+        bbox_size = bbox_max - bbox_min + 1
+
+        colors = np.array([color_at[p] for p in positions if p in color_at])
+        avg_color = [int(c) for c in colors.mean(axis=0)] if len(colors) > 0 else [128, 128, 128]
+
+        type_counts = Counter(b.block_id for b in blocks_in_region)
+        top_blocks = type_counts.most_common(3)
+
+        y_frac = centroid[1] / max(dy, 1)
+        horiz_span = max(bbox_size[0], bbox_size[2])
+        vert_span = bbox_size[1]
+        aspect_ratio = horiz_span / max(vert_span, 1)
+
+        if y_frac < 0.1:
+            role = "foundation"
+        elif y_frac < 0.35:
+            role = "lower_wall"
+        elif y_frac < 0.65:
+            role = "mid_wall"
+        elif y_frac < 0.85:
+            role = "upper_wall"
+        else:
+            role = "roof/spire"
+
+        is_thin_vertical = vert_span > horiz_span * 2
+        if is_thin_vertical and y_frac > 0.3:
+            role = "pillar/column"
+
+        is_flat_horizontal = vert_span <= 3 and horiz_span > 5
+        if is_flat_horizontal:
+            if y_frac > 0.6:
+                role = "roof_surface"
+            elif y_frac < 0.15:
+                role = "floor"
+
+        if aspect_ratio > 2.5 and vert_span <= max(5, dy * 0.15):
+            if y_frac > 0.25:
+                role = "roof_overhang"
+            else:
+                role = "floor"
+
+        if y_frac > 0.85 and horiz_span < max(dx, dz) * 0.2:
+            role = "spire"
+
+        all_regions.append({
+            "id": f"r{rid}",
+            "region_label": rid,
+            "count": len(positions),
+            "positions": positions,
+            "centroid": [round(float(c), 1) for c in centroid],
+            "bbox_min": [int(v) for v in bbox_min],
+            "bbox_max": [int(v) for v in bbox_max],
+            "bbox_size": [int(v) for v in bbox_size],
+            "avg_rgb": avg_color,
+            "current_blocks": [{"id": bid, "count": c} for bid, c in top_blocks],
+            "structural_role": role,
+            "neighbors": [],
+        })
+
+    all_regions.sort(key=lambda r: -r["count"])
+    return all_regions, label_map
 
 
-def _compute_y_bands(dy: int) -> list[tuple]:
-    """Split height into structurally meaningful bands."""
-    if dy < 10:
-        return [("all", 0, dy)]
+def _find_largest_neighbor(
+    positions: list[tuple],
+    label_map: dict[tuple, int],
+    region_positions: dict[int, list[tuple]],
+    self_rid: int,
+) -> Optional[int]:
+    """Find the largest neighboring region for a tiny cluster to merge into."""
+    neighbors_6 = [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
+    neighbor_counts: Counter = Counter()
+    for x, y, z in positions:
+        for nx, ny, nz in neighbors_6:
+            npos = (x + nx, y + ny, z + nz)
+            if npos in label_map and label_map[npos] != self_rid:
+                neighbor_counts[label_map[npos]] += 1
+    if not neighbor_counts:
+        return None
+    best_rid = neighbor_counts.most_common(1)[0][0]
+    if len(region_positions.get(best_rid, [])) >= MIN_REGION_BLOCKS:
+        return best_rid
+    return None
 
-    foundation_h = max(1, int(dy * 0.05))
-    bands = [
-        ("foundation", 0, foundation_h),
-        ("lower", foundation_h, int(dy * 0.30)),
-        ("middle", int(dy * 0.30), int(dy * 0.60)),
-        ("upper", int(dy * 0.60), int(dy * 0.85)),
-        ("top", int(dy * 0.85), dy),
-    ]
-    return [(name, lo, hi) for name, lo, hi in bands if hi > lo]
+
+def _consolidate_similar_regions(
+    label_map: dict[tuple, int],
+    region_positions: dict[int, list[tuple]],
+    color_at: dict[tuple, np.ndarray],
+) -> tuple[dict[tuple, int], dict[int, list[tuple]], int]:
+    """Merge adjacent regions whose average colors are within _MERGE_COLOR_THRESHOLD.
+
+    Iteratively merges the most-similar pair until no mergeable pairs remain.
+    This collapses the fragmented micro-regions into cohesive architectural zones.
+    """
+    neighbors_6 = [(1,0,0),(-1,0,0),(0,1,0),(0,-1,0),(0,0,1),(0,0,-1)]
+
+    active_rids = {rid for rid, pos in region_positions.items() if len(pos) >= MIN_REGION_BLOCKS}
+
+    def _avg_color(rid: int) -> np.ndarray:
+        positions = region_positions[rid]
+        if not positions:
+            return np.array([128.0, 128.0, 128.0])
+        colors = np.array([color_at[p] for p in positions if p in color_at])
+        return colors.mean(axis=0) if len(colors) > 0 else np.array([128.0, 128.0, 128.0])
+
+    merge_count = 0
+    changed = True
+    while changed:
+        changed = False
+        avg_colors = {rid: _avg_color(rid) for rid in active_rids}
+
+        adjacency: dict[int, set[int]] = {rid: set() for rid in active_rids}
+        pos_to_rid: dict[tuple, int] = {}
+        for rid in active_rids:
+            for p in region_positions[rid]:
+                pos_to_rid[p] = rid
+
+        for rid in active_rids:
+            sample = region_positions[rid][:1000]
+            for x, y, z in sample:
+                for dx, dy, dz in neighbors_6:
+                    npos = (x+dx, y+dy, z+dz)
+                    nrid = pos_to_rid.get(npos)
+                    if nrid is not None and nrid != rid and nrid in active_rids:
+                        adjacency[rid].add(nrid)
+
+        best_pair = None
+        best_dist = float("inf")
+        for rid, neighbors in adjacency.items():
+            for nrid in neighbors:
+                if nrid <= rid:
+                    continue
+                dist = float(np.linalg.norm(avg_colors[rid] - avg_colors[nrid]))
+                if dist < _MERGE_COLOR_THRESHOLD and dist < best_dist:
+                    best_dist = dist
+                    best_pair = (rid, nrid)
+
+        if best_pair:
+            keep, absorb = best_pair
+            if len(region_positions[absorb]) > len(region_positions[keep]):
+                keep, absorb = absorb, keep
+
+            for p in region_positions[absorb]:
+                label_map[p] = keep
+            region_positions[keep].extend(region_positions[absorb])
+            region_positions[absorb] = []
+            active_rids.discard(absorb)
+            merge_count += 1
+            changed = True
+
+    return label_map, region_positions, merge_count
 
 
-def _describe_region(
-    name: str,
-    blocks: list[BlockMapping],
-    voxel_grid: VoxelGrid,
-    y_lo: int, y_hi: int,
-) -> dict:
-    """Build a compact description of a region for the LLM prompt."""
-    positions = np.array([b.position for b in blocks])
-    x_min, y_min, z_min = positions.min(axis=0)
-    x_max, y_max, z_max = positions.max(axis=0)
+def _smooth_regions(
+    block_grid: BlockGrid,
+    all_regions: list[dict],
+    label_map: dict[tuple, int],
+) -> tuple[BlockGrid, int]:
+    """Within each region, replace all blocks with the region's dominant block type.
 
-    type_counts = Counter(b.block_id for b in blocks)
-    top3 = type_counts.most_common(3)
+    Operates on ALL regions (not just the top-N for LLM), so every labeled
+    block gets unified. This is the primary denoising step.
+    """
+    region_dominant: dict[int, str] = {}
+    for r in all_regions:
+        if r["current_blocks"]:
+            region_dominant[r["region_label"]] = r["current_blocks"][0]["id"]
 
-    colors = []
-    grid = voxel_grid.grid
-    for b in blocks[:200]:
-        x, y, z = b.position
-        if x < grid.shape[0] and y < grid.shape[1] and z < grid.shape[2]:
-            rgb = grid[x, y, z, :3]
-            if grid[x, y, z, 3] > 0:
-                colors.append(rgb)
+    changed = 0
+    for block in block_grid.blocks:
+        rid = label_map.get(block.position)
+        if rid is None or rid not in region_dominant:
+            continue
+        dominant = region_dominant[rid]
+        if block.block_id != dominant:
+            block.block_id = dominant
+            block.reason = f"smooth:{rid}"
+            changed += 1
 
-    avg_color = [128, 128, 128]
-    if colors:
-        avg_color = [int(c) for c in np.mean(colors, axis=0)]
+    remaining = sum(1 for b in block_grid.blocks if not b.reason.startswith("smooth:"))
+    if remaining > 0:
+        log.info(f"Smoothed {changed} blocks; {remaining} blocks not in any region")
 
-    return {
-        "id": name,
-        "count": len(blocks),
-        "bounds": {"x": [int(x_min), int(x_max)], "y": [int(y_min), int(y_max)], "z": [int(z_min), int(z_max)]},
-        "height_band": f"y={y_lo}-{y_hi}",
-        "avg_rgb": avg_color,
-        "current_blocks": [{"id": bid, "count": c} for bid, c in top3],
-        "block_positions": [b.position for b in blocks],
+    return block_grid, changed
+
+
+def _smooth_remaining_by_neighbors(
+    block_grid: BlockGrid,
+    label_map: dict[tuple, int],
+    all_regions: list[dict],
+) -> BlockGrid:
+    """Iterative neighbor-majority pass for blocks not covered by region smoothing.
+
+    Any block whose reason doesn't start with "smooth:" gets replaced by the
+    most common block_id among its 6-connected neighbors. Runs multiple passes
+    until convergence so the smoothing propagates inward from region boundaries.
+    """
+    neighbors_6 = [(1,0,0),(-1,0,0),(0,1,0),(0,-1,0),(0,0,1),(0,0,-1)]
+    block_by_pos = {b.position: b for b in block_grid.blocks}
+    unsmoothed = {
+        b.position for b in block_grid.blocks
+        if not b.reason.startswith("smooth:")
     }
+
+    if not unsmoothed:
+        return block_grid
+
+    max_passes = 5
+    total_fixed = 0
+    for pass_num in range(max_passes):
+        fixed_this_pass = 0
+        still_unsmoothed = set()
+        for pos in unsmoothed:
+            x, y, z = pos
+            neighbor_blocks: Counter = Counter()
+            for dx, dy, dz in neighbors_6:
+                npos = (x+dx, y+dy, z+dz)
+                nb = block_by_pos.get(npos)
+                if nb is not None:
+                    neighbor_blocks[nb.block_id] += 1
+
+            if neighbor_blocks:
+                majority_block = neighbor_blocks.most_common(1)[0][0]
+                block = block_by_pos[pos]
+                if block.block_id != majority_block:
+                    block.block_id = majority_block
+                    block.reason = f"neighbor_smooth:pass{pass_num}"
+                    fixed_this_pass += 1
+                else:
+                    block.reason = f"neighbor_smooth:pass{pass_num}"
+            else:
+                still_unsmoothed.add(pos)
+
+        total_fixed += fixed_this_pass
+        unsmoothed = still_unsmoothed
+        if fixed_this_pass == 0:
+            break
+
+    if total_fixed > 0:
+        log.info(f"Neighbor-majority smoothing fixed {total_fixed} blocks over {pass_num + 1} passes")
+
+    return block_grid
+
+
+def _compute_adjacency(regions: list[dict]) -> None:
+    """Compute which regions are spatially adjacent (share face neighbors)."""
+    rid_to_idx = {r["region_label"]: i for i, r in enumerate(regions)}
+    neighbors_6 = [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
+
+    pos_to_region: dict[tuple, int] = {}
+    for r in regions:
+        for p in r["positions"]:
+            pos_to_region[p] = r["region_label"]
+
+    for r in regions:
+        adj_set: set[str] = set()
+        sample = r["positions"][:500]
+        for x, y, z in sample:
+            for nx, ny, nz in neighbors_6:
+                npos = (x + nx, y + ny, z + nz)
+                nrid = pos_to_region.get(npos)
+                if nrid is not None and nrid != r["region_label"] and nrid in rid_to_idx:
+                    adj_set.add(regions[rid_to_idx[nrid]]["id"])
+        r["neighbors"] = sorted(adj_set)
 
 
 def _build_prompt(regions: list[dict], description: Optional[str]) -> str:
-    used_bids = set()
-    used_tags = set()
-    for r in regions:
-        for b in r["current_blocks"]:
-            used_bids.add(b["id"])
-
+    palette_lines = []
     for entry in DEFAULT_PALETTE:
-        if entry["id"] in used_bids:
-            used_tags.update(entry["tags"])
+        bid = entry["id"].replace("minecraft:", "")
+        palette_lines.append(
+            f"  {bid}: rgb({entry['color'][0]},{entry['color'][1]},{entry['color'][2]}) [{', '.join(entry['tags'])}]"
+        )
+    palette_text = "\n".join(palette_lines)
 
-    relevant = []
-    for entry in DEFAULT_PALETTE:
-        if entry["id"] in used_bids or bool(used_tags & set(entry["tags"])):
-            relevant.append(entry)
-
-    palette_summary = []
-    for b in relevant:
-        bid = b['id'].replace('minecraft:', '')
-        palette_summary.append(f"  {bid}: rgb({b['color'][0]},{b['color'][1]},{b['color'][2]}) {b['tags']}")
-    palette_text = "\n".join(palette_summary)
-
-    region_descs = []
+    region_lines = []
     for r in regions:
         blocks_str = ", ".join(
             f"{b['id'].replace('minecraft:', '')}({b['count']})"
             for b in r["current_blocks"]
+        ) if r["current_blocks"] else "unknown"
+        dominant = r["current_blocks"][0]["id"].replace("minecraft:", "") if r["current_blocks"] else "unknown"
+        neighbors_str = ", ".join(r["neighbors"][:5]) if r["neighbors"] else "none"
+
+        defects_parts = []
+        struct = r.get("structure", {})
+        if struct.get("holes", 0) > 20:
+            defects_parts.append(f"holes={struct['holes']}")
+        if struct.get("bumps", 0) > 30:
+            defects_parts.append(f"bumps={struct['bumps']}")
+        if struct.get("floating", 0) > 10:
+            defects_parts.append(f"floating={struct['floating']}")
+        defects_str = f", defects=[{', '.join(defects_parts)}]" if defects_parts else ""
+
+        region_lines.append(
+            f"  {r['id']}: {r['count']} blocks, role={r['structural_role']}, "
+            f"size={r['bbox_size'][0]}x{r['bbox_size'][1]}x{r['bbox_size'][2]}, "
+            f"color=rgb({r['avg_rgb'][0]},{r['avg_rgb'][1]},{r['avg_rgb'][2]}), "
+            f"current={dominant}, mix=[{blocks_str}], "
+            f"adj=[{neighbors_str}]{defects_str}"
         )
-        region_descs.append(
-            f"- {r['id']}: {r['count']}blk, {r['height_band']}, "
-            f"rgb({r['avg_rgb'][0]},{r['avg_rgb'][1]},{r['avg_rgb'][2]}), "
-            f"[{blocks_str}]"
-        )
-    regions_text = "\n".join(region_descs)
+    regions_text = "\n".join(region_lines)
 
     context = ""
     if description:
-        context = f"\nStructure: {description}\n"
+        context = f"\nThis structure is: {description}\n"
 
-    return f"""Minecraft block refinement. Suggest block-to-block replacements per region.
-{context}
-## Palette (use minecraft: prefix in response)
+    image_note = """
+## Reference images
+If images are attached, use them to understand what this structure looks like:
+- The reference image shows the original object/building
+- The voxel views show the 3D shape from different angles
+- The block preview shows the current block color assignments
+Use these to make better material choices that match the original look.
+"""
+
+    return f"""You are an expert Minecraft builder. I'm converting a 3D model into a Minecraft structure and need you to choose the best block materials for each section.
+
+The structure has been auto-segmented into regions (walls, roofs, pillars, etc.) and each region has been color-matched to a Minecraft block. The colors are correct, but the material choices are generic. Your job: upgrade the materials to be architecturally appropriate.
+{context}{image_note}
+## Available Minecraft blocks
 {palette_text}
 
-## Regions
+## Structure regions
+Each region is a contiguous section of the build. Fields: block count, structural role, physical size, average RGB color, current block assignment, block mix before smoothing, and adjacent regions.
+
 {regions_text}
 
+## What to do
+For each region, you can do TWO things:
+
+### 1. Block upgrades (material choice) — PRIMARY TASK
+Upgrade the auto-matched block to something architecturally appropriate:
+- **Foundations/floors** → stone_bricks, deepslate, cobblestone
+- **Walls** → planks, bricks, terracotta, stone_bricks. Adjacent walls should use DIFFERENT materials for visual contrast
+- **Roofs/overhangs** → dark blocks: dark_oak_planks, spruce_planks, deepslate
+- **Pillars/columns** → logs (oak_log, spruce_log) or quartz_block to contrast walls
+- **Spires** → stone_bricks, quartz_block, or logs
+- **Detail/trim** → accent blocks that contrast surroundings
+
+### 2. Structure fixes (voxel geometry) — USE SPARINGLY
+Regions with `defects` can be fixed using structural operations:
+- **fill_holes** — plug small gaps in walls/surfaces (ONLY when holes > 20)
+- **smooth_surface** — remove stray 1-block bumps (ONLY when bumps > 30)
+- **remove_floating** — delete disconnected fragments (ONLY when floating > 10)
+
+**CRITICAL**: Do NOT apply structural ops to every region! Only use them on regions with LARGE defect counts. Small defect counts are normal voxel geometry (edges, details, overhangs). Applying smooth_surface everywhere destroys eaves, trim, and architectural details. When in doubt, SKIP structural ops.
+
 ## Rules
-- Only remap where structurally better (foundation→stone, roof→roof blocks)
-- Preserve color variety — don't unify regions
-- Keep replacement color close to original
-- Omit regions that are already good
+- ONE block per region. Stay in a similar LIGHTNESS (don't turn dark→bright or bright→dark).
+- Hue shifts are OK — brown stone → brown planks, gray stone → gray stone_bricks.
+- Focus on material upgrades: cobblestone→stone_bricks, stone→andesite, oak_planks→spruce_planks for dark areas.
+- Adjacent regions (adj field) SHOULD use different blocks when possible.
+- Only include regions you want to CHANGE. Omit regions that are fine as-is.
+- Fewer, higher-confidence changes are better than changing everything.
+- Most regions only need a block upgrade, NOT structural ops.
 
-Return JSON: {{"region_id": {{"minecraft:old": "minecraft:new"}}}}.
-Only regions/blocks you want to CHANGE. No explanation."""
+## Response format
+Return ONLY a JSON object. Each key is a region ID. The value can be:
+- A string (block change only): `"minecraft:stone_bricks"`
+- An object (block change + structure fix or structure fix only):
+  `{{"block": "minecraft:stone_bricks", "ops": ["fill_holes", "smooth_surface"]}}`
+  `{{"ops": ["remove_floating"]}}` (no block change, just fix structure)
+
+Example (note: most regions are block-only, ops are rare):
+{{"r0": "minecraft:stone_bricks", "r2": "minecraft:spruce_planks", "r5": "minecraft:dark_oak_planks", "r8": {{"block": "minecraft:cobblestone", "ops": ["fill_holes"]}}}}
+
+No explanation, no markdown fences, just the JSON."""
 
 
-def _parse_response(raw: str, regions: list[dict]) -> dict:
-    """Parse the LLM's JSON response into {region_id: {old_block: new_block}} dict.
+def _parse_response(raw: str, regions: list[dict]) -> tuple[dict, dict]:
+    """Parse the LLM's JSON response.
 
-    Also supports the legacy format {region_id: block_id} for backward compat.
+    Supports two formats:
+      Simple:   {"r0": "minecraft:stone_bricks"}
+      Extended: {"r0": {"block": "minecraft:stone_bricks", "ops": ["fill_holes"]}}
+
+    Returns (block_assignments, ops_by_region).
     """
     raw = raw.strip()
     if raw.startswith("```"):
-        raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
+        raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
 
     valid_ids = {b["id"] for b in DEFAULT_PALETTE}
 
@@ -283,92 +734,329 @@ def _parse_response(raw: str, regions: list[dict]) -> dict:
         assignments = json.loads(raw)
     except json.JSONDecodeError:
         log.error(f"Failed to parse LLM response as JSON: {raw[:300]}")
-        return {}
+        return {}, {}
 
     if not isinstance(assignments, dict):
         log.error(f"LLM response is not a dict: {type(assignments)}")
-        return {}
+        return {}, {}
 
     region_ids = {r["id"] for r in regions}
-    cleaned = {}
+    cleaned_blocks: dict[str, str] = {}
+    cleaned_ops: dict[str, list[str]] = {}
+
     for region_id, value in assignments.items():
         if region_id not in region_ids:
             log.warning(f"LLM referenced unknown region '{region_id}', skipping")
             continue
 
+        block_id = None
+        ops: list[str] = []
+
         if isinstance(value, str):
-            if value not in valid_ids:
-                log.warning(f"LLM suggested unknown block '{value}', skipping")
-                continue
-            cleaned[region_id] = value
+            block_id = value
         elif isinstance(value, dict):
-            remap = {}
-            for old_bid, new_bid in value.items():
-                if new_bid not in valid_ids:
-                    log.warning(f"LLM suggested unknown block '{new_bid}', skipping")
-                    continue
-                remap[old_bid] = new_bid
-            if remap:
-                cleaned[region_id] = remap
+            block_id = value.get("block")
+            raw_ops = value.get("ops", [])
+            if isinstance(raw_ops, list):
+                ops = [o for o in raw_ops if isinstance(o, str) and o in STRUCTURAL_OPS]
+            if not block_id and not ops:
+                log.warning(f"Region '{region_id}': no block or ops specified")
+                continue
         else:
             log.warning(f"Unexpected value type for region '{region_id}': {type(value)}")
+            continue
 
-    log.info(f"LLM refined {len(cleaned)} regions: {cleaned}")
-    return cleaned
+        if block_id:
+            if block_id not in valid_ids:
+                prefixed = f"minecraft:{block_id}"
+                if prefixed in valid_ids:
+                    block_id = prefixed
+                else:
+                    log.warning(f"LLM suggested unknown block '{block_id}', skipping block change")
+                    block_id = None
+            if block_id:
+                cleaned_blocks[region_id] = block_id
+
+        if ops:
+            cleaned_ops[region_id] = ops
+
+    log.info(f"LLM assigned {len(cleaned_blocks)} blocks, {len(cleaned_ops)} structural ops")
+    return cleaned_blocks, cleaned_ops
 
 
 def _apply_assignments(
     block_grid: BlockGrid,
     regions: list[dict],
+    label_map: dict[tuple, int],
     assignments: dict,
 ) -> BlockGrid:
-    """Apply LLM block assignments to the block grid.
+    """Replace ALL blocks in a region with the LLM's chosen block.
 
-    Supports two formats:
-    - Remap dict: {region_id: {old_block: new_block}} — only replaces matching blocks
-    - Legacy string: {region_id: new_block} — replaces only the dominant block type
+    Uses lightness-based color guard: blocks the change only when the
+    lightness difference is extreme (dark->bright or vice versa), but
+    allows hue shifts within similar brightness ranges. This lets the LLM
+    do material upgrades like stone -> stone_bricks without being vetoed.
     """
-    palette_colors = {b["id"]: np.array(b["color"]) for b in DEFAULT_PALETTE}
+    region_by_label = {r["region_label"]: r for r in regions}
+    assignment_by_label: dict[int, str] = {}
+    for r in regions:
+        if r["id"] in assignments:
+            assignment_by_label[r["region_label"]] = assignments[r["id"]]
 
-    pos_to_region = {}
-    for region in regions:
-        if region["id"] not in assignments:
-            continue
-        for pos in region["block_positions"]:
-            pos_to_region[tuple(pos)] = region
+    palette_colors = {b["id"]: np.array(b["color"], dtype=float) for b in DEFAULT_PALETTE}
+
+    _LIGHTNESS_THRESHOLD = 120.0
 
     changed = 0
-    skipped_color = 0
+    vetoed = 0
     for block in block_grid.blocks:
-        region = pos_to_region.get(block.position)
+        rid = label_map.get(block.position)
+        if rid is None or rid not in assignment_by_label:
+            continue
+
+        new_block = assignment_by_label[rid]
+        if new_block == block.block_id:
+            continue
+
+        region = region_by_label.get(rid)
+        if region:
+            avg_rgb = np.array(region["avg_rgb"], dtype=float)
+            new_color = palette_colors.get(new_block)
+            if new_color is not None:
+                lightness_diff = abs(float(avg_rgb.mean()) - float(new_color.mean()))
+                if lightness_diff > _LIGHTNESS_THRESHOLD:
+                    vetoed += 1
+                    continue
+
+        block.block_id = new_block
+        block.reason = f"llm_refine:{rid}"
+        changed += 1
+
+    if vetoed:
+        log.info(f"Color guard vetoed {vetoed} block changes (lightness diff > {_LIGHTNESS_THRESHOLD})")
+    log.info(f"LLM assignment changed {changed} blocks")
+    return block_grid
+
+
+# ── Structural operations ──────────────────────────────────────────────
+
+STRUCTURAL_OPS = {"fill_holes", "smooth_surface", "remove_floating"}
+_NEIGHBORS_6 = [(1,0,0),(-1,0,0),(0,1,0),(0,-1,0),(0,0,1),(0,0,-1)]
+
+
+def _analyze_region_structure(
+    region: dict,
+    occupied: set[tuple],
+    dims: tuple[int, int, int],
+) -> dict:
+    """Compute structural metrics for a region: holes, roughness, floaters."""
+    positions = set(region["positions"])
+    bbox_min = region["bbox_min"]
+    bbox_max = region["bbox_max"]
+
+    holes = 0
+    for x in range(bbox_min[0], bbox_max[0] + 1):
+        for y in range(bbox_min[1], bbox_max[1] + 1):
+            for z in range(bbox_min[2], bbox_max[2] + 1):
+                pos = (x, y, z)
+                if pos in positions or pos in occupied:
+                    continue
+                neighbors_in_region = sum(
+                    1 for dx, dy, dz in _NEIGHBORS_6
+                    if (x+dx, y+dy, z+dz) in positions
+                )
+                if neighbors_in_region >= 3:
+                    holes += 1
+
+    bumps = 0
+    for pos in positions:
+        x, y, z = pos
+        neighbor_count = sum(
+            1 for dx, dy, dz in _NEIGHBORS_6
+            if (x+dx, y+dy, z+dz) in positions
+        )
+        if neighbor_count <= 1:
+            bumps += 1
+
+    floating = 0
+    visited: set[tuple] = set()
+    components = []
+    for pos in positions:
+        if pos in visited:
+            continue
+        queue = deque([pos])
+        visited.add(pos)
+        comp = [pos]
+        while queue:
+            cx, cy, cz = queue.popleft()
+            for dx, dy, dz in _NEIGHBORS_6:
+                npos = (cx+dx, cy+dy, cz+dz)
+                if npos in positions and npos not in visited:
+                    visited.add(npos)
+                    comp.append(npos)
+                    queue.append(npos)
+        components.append(comp)
+
+    if len(components) > 1:
+        components.sort(key=len, reverse=True)
+        floating = sum(len(c) for c in components[1:])
+
+    return {
+        "holes": holes,
+        "bumps": bumps,
+        "floating": floating,
+        "components": len(components),
+    }
+
+
+def _op_fill_holes(
+    block_grid: BlockGrid,
+    region: dict,
+    occupied: set[tuple],
+    block_id: str,
+) -> int:
+    """Fill small interior holes (empty voxels surrounded on 3+ sides by region blocks)."""
+    positions = set(region["positions"])
+    bbox_min = region["bbox_min"]
+    bbox_max = region["bbox_max"]
+    filled = 0
+
+    for x in range(bbox_min[0], bbox_max[0] + 1):
+        for y in range(bbox_min[1], bbox_max[1] + 1):
+            for z in range(bbox_min[2], bbox_max[2] + 1):
+                pos = (x, y, z)
+                if pos in occupied:
+                    continue
+                neighbors_in = sum(
+                    1 for dx, dy, dz in _NEIGHBORS_6
+                    if (x+dx, y+dy, z+dz) in positions
+                )
+                if neighbors_in >= 3:
+                    block_grid.blocks.append(BlockMapping(
+                        block_id=block_id,
+                        position=pos,
+                        reason="struct:fill_holes",
+                    ))
+                    occupied.add(pos)
+                    positions.add(pos)
+                    filled += 1
+
+    return filled
+
+
+def _op_smooth_surface(
+    block_grid: BlockGrid,
+    region: dict,
+    occupied: set[tuple],
+) -> int:
+    """Remove 1-connected surface bumps (blocks with only 1 neighbor in the region)."""
+    positions = set(region["positions"])
+    to_remove: set[tuple] = set()
+
+    for pos in positions:
+        x, y, z = pos
+        neighbor_count = sum(
+            1 for dx, dy, dz in _NEIGHBORS_6
+            if (x+dx, y+dy, z+dz) in positions
+        )
+        if neighbor_count <= 1 and len(positions) > 10:
+            to_remove.add(pos)
+
+    if to_remove:
+        block_grid.blocks = [
+            b for b in block_grid.blocks if b.position not in to_remove
+        ]
+        for p in to_remove:
+            occupied.discard(p)
+            positions.discard(p)
+
+    return len(to_remove)
+
+
+def _op_remove_floating(
+    block_grid: BlockGrid,
+    region: dict,
+    occupied: set[tuple],
+) -> int:
+    """Remove small disconnected fragments, keeping only the largest connected component."""
+    positions = set(region["positions"])
+    visited: set[tuple] = set()
+    components: list[list[tuple]] = []
+
+    for pos in positions:
+        if pos in visited:
+            continue
+        queue = deque([pos])
+        visited.add(pos)
+        comp = [pos]
+        while queue:
+            cx, cy, cz = queue.popleft()
+            for dx, dy, dz in _NEIGHBORS_6:
+                npos = (cx+dx, cy+dy, cz+dz)
+                if npos in positions and npos not in visited:
+                    visited.add(npos)
+                    comp.append(npos)
+                    queue.append(npos)
+        components.append(comp)
+
+    if len(components) <= 1:
+        return 0
+
+    components.sort(key=len, reverse=True)
+    to_remove: set[tuple] = set()
+    for comp in components[1:]:
+        to_remove.update(comp)
+
+    if to_remove:
+        block_grid.blocks = [
+            b for b in block_grid.blocks if b.position not in to_remove
+        ]
+        for p in to_remove:
+            occupied.discard(p)
+
+    return len(to_remove)
+
+
+def apply_structural_ops(
+    block_grid: BlockGrid,
+    regions: list[dict],
+    label_map: dict[tuple, int],
+    ops_by_region: dict[str, list[str]],
+    block_by_region: dict[str, str],
+) -> dict:
+    """Execute structural operations on specified regions.
+
+    Returns summary: {region_id: {op: count_changed}}.
+    """
+    occupied = {b.position for b in block_grid.blocks}
+    region_by_id = {r["id"]: r for r in regions}
+    summary: dict[str, dict] = {}
+
+    for region_id, ops in ops_by_region.items():
+        region = region_by_id.get(region_id)
         if not region:
             continue
 
-        assignment = assignments[region["id"]]
+        block_id = block_by_region.get(region_id)
+        if not block_id:
+            blks = region.get("current_blocks", [])
+            block_id = blks[0]["id"] if blks else "minecraft:stone"
 
-        if isinstance(assignment, dict):
-            new_block = assignment.get(block.block_id)
-        elif isinstance(assignment, str):
-            dominant_bid = region["current_blocks"][0]["id"] if region["current_blocks"] else None
-            new_block = assignment if block.block_id == dominant_bid else None
-        else:
-            continue
+        region_summary: dict[str, int] = {}
+        for op in ops:
+            if op == "fill_holes":
+                n = _op_fill_holes(block_grid, region, occupied, block_id)
+                region_summary["fill_holes"] = n
+            elif op == "smooth_surface":
+                n = _op_smooth_surface(block_grid, region, occupied)
+                region_summary["smooth_surface"] = n
+            elif op == "remove_floating":
+                n = _op_remove_floating(block_grid, region, occupied)
+                region_summary["remove_floating"] = n
 
-        if not new_block or new_block == block.block_id:
-            continue
+        if region_summary:
+            summary[region_id] = region_summary
+            total = sum(region_summary.values())
+            log.info(f"Structural ops on {region_id}: {region_summary} ({total} blocks affected)")
 
-        old_color = palette_colors.get(block.block_id)
-        new_color = palette_colors.get(new_block)
-        if old_color is not None and new_color is not None:
-            if np.linalg.norm(old_color.astype(float) - new_color.astype(float)) > 90:
-                skipped_color += 1
-                continue
-
-        block.block_id = new_block
-        block.reason = f"llm_refine:{region['id']}"
-        changed += 1
-
-    if skipped_color:
-        log.info(f"Skipped {skipped_color} blocks where LLM suggestion was too far from original color")
-    log.info(f"LLM refinement changed {changed} blocks across {len(assignments)} regions")
-    return block_grid
+    return summary

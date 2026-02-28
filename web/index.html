@@ -7,8 +7,11 @@
 <title>CraftFrom</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 44'><polygon points='2,18 16,10 30,18 16,26' fill='%235b8c3a'/><polygon points='2,18 16,26 16,42 2,34' fill='%23866040'/><polygon points='30,18 16,26 16,42 30,34' fill='%236e4e30'/><line x1='16' y1='14' x2='16' y2='5' stroke='%232d6018' stroke-width='2'/><rect x='13.5' y='4' width='3' height='3' fill='%232d6018' rx='.3'/><rect x='10' y='-1' width='5' height='5' fill='%23d02828' rx='.6'/><rect x='16' y='0' width='5' height='5' fill='%23b82020' rx='.6'/><rect x='12.5' y='-2.5' width='5' height='4' fill='%23e03838' rx='.5'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" onload="this.rel='stylesheet'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet"></noscript>
 <style>
+html { background: #090b0c; }
 :root {
   --bg: #090b0c;
   --surface: #1a1d1f;
@@ -157,6 +160,8 @@ body {
   60%  { opacity: 1; transform: translateY(-2px) scale(1.005); }
   100% { opacity: 1; transform: translateY(0) scale(1); }
 }
+.no-intro .stagger { opacity: 1; transform: none; animation: none; }
+.no-intro #app-upload::before { opacity: 1; animation: none; }
 
 /* ═══ Upload ═══ */
 .upload-row {
@@ -587,6 +592,12 @@ body {
 .sb-step:hover { color: var(--text2); background: var(--surface2); }
 .sb-step.active { color: var(--white); background: var(--surface2); }
 .sb-step.done { color: var(--text2); }
+.sb-step.skipped { color: var(--text3); }
+.sb-step.ready { color: #f0b432; cursor: pointer; }
+.sb-step.ready:hover { background: rgba(240,180,50,0.1); }
+.sb-ready-icon { font-size: 11px; }
+.sb-step.skipped .sb-skip-icon { font-size: 9px; color: var(--text3); }
+.sb-arrow.skipped { opacity: 0.25; color: var(--text3) !important; }
 .sb-step.error { color: var(--red); }
 
 .sb-step.just-done { animation: sbPop 0.35s var(--spring); }
@@ -617,6 +628,84 @@ body {
   display: flex; gap: 14px;
 }
 .topbar-stats .ts-val { color: var(--white); margin-right: 3px; font-weight: 500; }
+
+/* ═══ Step info strip ═══ */
+.step-info-strip {
+  max-height: 0; overflow: hidden;
+  background: var(--surface2); border-bottom: 1px solid var(--border);
+  transition: max-height 0.3s var(--ease);
+}
+.step-info-strip.open { max-height: 260px; }
+.step-info-inner {
+  display: flex; align-items: flex-start; gap: 14px;
+  padding: 12px 16px; overflow-x: auto;
+}
+.step-info-inner:empty { padding: 0; }
+.step-info-inner::-webkit-scrollbar { height: 4px; }
+.step-info-inner::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.si-label {
+  font-family: var(--mono); font-size: 10px; color: var(--text3);
+  text-transform: uppercase; letter-spacing: 0.5px;
+  white-space: nowrap; padding-top: 4px; flex-shrink: 0;
+}
+.si-previews {
+  display: flex; gap: 8px; flex-shrink: 0; flex-wrap: wrap;
+}
+.si-previews img {
+  height: 140px; border-radius: 6px; border: 1px solid var(--border);
+  cursor: pointer; transition: border-color 0.15s, transform 0.15s;
+  background: var(--surface);
+}
+.si-previews img:hover { border-color: var(--green); transform: scale(1.03); }
+.si-meta {
+  font-family: var(--mono); font-size: 9px; color: var(--text3);
+  line-height: 1.6; white-space: nowrap; padding-top: 4px; flex-shrink: 0;
+}
+.si-meta strong { color: var(--text2); font-weight: 500; }
+.si-status-tag {
+  display: inline-block; font-size: 8px; padding: 1px 6px;
+  border-radius: 3px; margin-left: 6px;
+}
+.si-status-tag.done { background: var(--green-dim); color: var(--green); }
+.si-status-tag.skipped { background: var(--surface); color: var(--text3); }
+.si-status-tag.active { background: var(--surface3); color: var(--white); }
+.si-status-tag.ready { background: rgba(240,180,50,0.1); color: #f0b432; }
+
+/* ═══ Refine CTA ═══ */
+.refine-cta {
+  position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+  z-index: 10; display: flex; align-items: center; gap: 12px;
+  background: rgba(19,21,22,0.92); border: 1px solid rgba(240,180,50,0.3);
+  border-radius: 8px; padding: 10px 16px; backdrop-filter: blur(8px);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  animation: refineSlideUp 0.4s var(--ease);
+  max-width: 520px;
+}
+.refine-cta.hidden { display: none; }
+@keyframes refineSlideUp {
+  from { opacity: 0; transform: translateX(-50%) translateY(20px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+.refine-cta-icon { font-size: 18px; flex-shrink: 0; }
+.refine-cta-text {
+  display: flex; flex-direction: column; gap: 2px;
+  font-family: var(--mono); font-size: 10px; color: var(--text2);
+}
+.refine-cta-text strong { color: #f0b432; font-size: 11px; }
+.refine-cta-text span { font-size: 9px; color: var(--text3); }
+.refine-cta-btn {
+  flex-shrink: 0; font-family: var(--mono); font-size: 10px; font-weight: 500;
+  padding: 6px 16px; border-radius: 5px; cursor: pointer;
+  background: none; border: 1px solid #f0b432; color: #f0b432;
+  transition: all 0.15s; white-space: nowrap;
+}
+.refine-cta-btn:hover { background: rgba(240,180,50,0.15); color: var(--white); }
+.refine-cta-dismiss {
+  position: absolute; top: 4px; right: 6px;
+  background: none; border: none; color: var(--text3); cursor: pointer;
+  font-size: 12px; padding: 2px; line-height: 1;
+}
+.refine-cta-dismiss:hover { color: var(--text); }
 
 /* ═══ Viewer body ═══ */
 .viewer-body { flex: 1; display: flex; position: relative; overflow: hidden; }
@@ -726,6 +815,10 @@ body {
 .step-card:hover { border-color: var(--border); background: var(--surface3); }
 .step-card.expanded { border-color: var(--border-hi); background: var(--surface3); }
 .step-card.done-card { border-left: 2px solid var(--green); }
+.step-card.skipped-card { border-left: 2px solid var(--border); opacity: 0.6; }
+.step-card.skipped-card .scc-status { color: var(--text3); background: var(--surface); }
+.step-card.ready-card { border-left: 2px solid #f0b432; }
+.step-card.ready-card .scc-status { color: #f0b432; background: rgba(240,180,50,0.1); }
 
 .step-card-header {
   padding: 10px 14px;
@@ -820,7 +913,124 @@ body {
 .llm-region-detail { font-family: var(--mono); font-size: 9px; color: var(--text2); line-height: 1.6; }
 .llm-region-arrow { display: inline-block; color: var(--green); margin: 0 3px; }
 .llm-region-decision { color: var(--white); font-weight: 500; }
-.llm-no-data { font-size: 12px; color: var(--text3); padding: 20px 0; text-align: center; }
+.llm-op-tag {
+  display: inline-block; font-size: 8px; padding: 1px 5px; margin: 2px 2px 0 0;
+  background: rgba(255,180,50,0.15); color: #f0b432; border-radius: 3px;
+  font-family: var(--mono);
+}
+.llm-no-data { font-size: 12px; color: var(--text3); padding: 20px 14px; text-align: center; line-height: 1.7; }
+.refine-not-ready { font-size: 12px; color: var(--text3); padding: 20px 14px; text-align: center; line-height: 1.7; }
+.llm-no-data .llm-skip-reason { font-size: 10px; color: var(--text3); margin-top: 6px; opacity: 0.8; }
+
+/* ═══ Manual LLM flow ═══ */
+.llm-manual { padding: 12px 14px; }
+
+.llm-manual-context {
+  margin-bottom: 12px; padding: 10px;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.llm-manual-context-title {
+  font-family: var(--mono); font-size: 9px; color: var(--text3);
+  text-transform: uppercase; letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+.llm-manual-context-hint {
+  font-size: 10px; color: var(--text3); margin-bottom: 8px; line-height: 1.5;
+}
+.llm-manual-images {
+  display: flex; gap: 6px; flex-wrap: wrap;
+}
+.llm-manual-img-card {
+  position: relative; border: 1px solid var(--border); border-radius: 4px;
+  overflow: hidden; cursor: pointer; transition: border-color 0.15s;
+  user-select: none;
+}
+.llm-manual-img-card:hover { border-color: var(--green); }
+.llm-manual-img-card img {
+  display: block; max-height: 72px; max-width: 100px;
+}
+.llm-manual-img-label {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  font-family: var(--mono); font-size: 7px; color: var(--white);
+  background: rgba(0,0,0,0.7); padding: 2px 4px;
+  text-align: center; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis;
+}
+.llm-manual-img-copy {
+  position: absolute; inset: 0; display: flex;
+  align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.6); opacity: 0;
+  transition: opacity 0.15s; pointer-events: none;
+  font-family: var(--mono); font-size: 9px; color: var(--white);
+  font-weight: 500; letter-spacing: 0.3px;
+}
+.llm-manual-img-card:hover .llm-manual-img-copy { opacity: 1; pointer-events: auto; }
+.llm-manual-img-card.copied-card { border-color: var(--green); }
+.llm-manual-img-card.copied-card .llm-manual-img-copy {
+  opacity: 1; pointer-events: auto; background: rgba(107,158,80,0.7);
+}
+.llm-manual-hint-text { font-size: 9px; color: var(--text3); }
+
+.llm-manual-step { margin-bottom: 12px; }
+.llm-manual-step-header {
+  font-family: var(--mono); font-size: 10px; color: var(--text2);
+  text-transform: uppercase; letter-spacing: 0.5px;
+  margin-bottom: 6px; display: flex; align-items: center; gap: 6px;
+}
+.llm-manual-step-num {
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--surface3); color: var(--text3);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 600; flex-shrink: 0;
+}
+.llm-manual-step-hint {
+  font-size: 10px; color: var(--text3); line-height: 1.5; margin-bottom: 6px;
+}
+.llm-manual-prompt {
+  font-family: var(--mono); font-size: 8px; color: var(--text3);
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 4px; padding: 8px; margin-bottom: 6px;
+  max-height: 100px; overflow-y: auto; white-space: pre-wrap;
+  word-break: break-all; line-height: 1.5; user-select: all;
+}
+.llm-manual-prompt::-webkit-scrollbar { width: 4px; }
+.llm-manual-prompt::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.llm-manual-btn-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.llm-manual-btn {
+  font-family: var(--mono); font-size: 10px; font-weight: 500;
+  padding: 5px 14px; border-radius: 4px; cursor: pointer;
+  background: none; border: 1px solid var(--border); color: var(--text2);
+  transition: all 0.15s;
+}
+.llm-manual-btn:hover { color: var(--white); border-color: var(--border-hi); }
+.llm-manual-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.llm-manual-btn.primary { border-color: var(--green); color: var(--green); }
+.llm-manual-btn.primary:hover { background: var(--green-dim); color: var(--white); }
+.llm-manual-btn.copied { border-color: var(--green); color: var(--green); }
+.llm-manual-textarea {
+  width: 100%; min-height: 80px; resize: vertical;
+  font-family: var(--mono); font-size: 9px; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 4px; padding: 8px; outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.llm-manual-textarea:focus { border-color: var(--green); box-shadow: 0 0 0 2px var(--green-dim); }
+.llm-manual-textarea::placeholder { color: var(--text3); }
+.llm-manual-status {
+  font-family: var(--mono); font-size: 9px; margin-top: 6px;
+  display: flex; align-items: center; gap: 6px;
+}
+.llm-manual-status.ok { color: var(--green); }
+.llm-manual-status.err { color: var(--red); }
+.llm-manual-trigger {
+  display: inline-block; margin-top: 10px;
+  font-family: var(--mono); font-size: 10px;
+  padding: 5px 14px; border-radius: 4px; cursor: pointer;
+  background: none; border: 1px solid var(--border); color: var(--text2);
+  transition: all 0.15s;
+}
+.llm-manual-trigger:hover { color: var(--white); border-color: var(--green); }
 
 .llm-api-section {
   padding: 12px 14px; border-top: 1px solid var(--border);
@@ -886,6 +1096,58 @@ body {
   opacity: 0.12;
 }
 
+/* ═══ Pipeline progress overlay ═══ */
+#pipeline-progress {
+  position: absolute; inset: 0; z-index: 5;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: var(--bg);
+  transition: opacity 0.4s var(--ease);
+}
+#pipeline-progress.hidden { opacity: 0; pointer-events: none; }
+
+.pp-inner { text-align: center; max-width: 400px; }
+
+.pp-step-num {
+  font-family: var(--mono); font-size: 11px; color: var(--text3);
+  letter-spacing: 1px; text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.pp-step-name {
+  font-family: var(--mono); font-size: 20px; font-weight: 600;
+  color: var(--white); margin-bottom: 16px;
+}
+.pp-bar-wrap {
+  width: 200px; height: 3px; margin: 0 auto 20px;
+  background: var(--surface3); border-radius: 2px;
+  overflow: hidden;
+}
+.pp-bar {
+  height: 100%; width: 0%;
+  background: var(--green); border-radius: 2px;
+  transition: width 0.5s var(--ease);
+}
+.pp-previews {
+  display: flex; gap: 8px; justify-content: center;
+  flex-wrap: wrap; margin-top: 12px;
+}
+.pp-previews img {
+  max-height: 120px; max-width: 160px;
+  border: 1px solid var(--border); border-radius: 6px;
+  opacity: 0; animation: imgIn 0.4s var(--ease) forwards;
+}
+.pp-done-items {
+  margin-top: 16px; display: flex; flex-direction: column;
+  align-items: center; gap: 4px;
+}
+.pp-done-item {
+  font-family: var(--mono); font-size: 10px; color: var(--text3);
+  display: flex; align-items: center; gap: 5px;
+}
+.pp-done-item .pp-done-check { color: var(--green); font-size: 9px; }
+.pp-done-item.skipped { opacity: 0.5; }
+.pp-done-item.skipped .pp-done-check { color: var(--text3); }
+
 /* ═══ Responsive ═══ */
 @media (max-width: 720px) {
   #app-upload { padding: 32px 20px; }
@@ -898,6 +1160,7 @@ body {
 </style>
 </head>
 <body>
+<script>if(sessionStorage.getItem('cf_loaded')){document.body.classList.add('no-intro')}sessionStorage.setItem('cf_loaded','1')</script>
 
 <div class="mc-particles" id="mc-particles"></div>
 <div class="mc-ground">
@@ -958,7 +1221,7 @@ body {
     <div class="llm-header">
       <div class="llm-header-left">
         <div class="llm-toggle" id="llm-toggle"></div>
-        LLM refinement <span class="info-icon">?<span class="info-tip">Uses an AI model (Gemini, OpenAI, or Anthropic) to intelligently refine block choices — e.g. picking oak planks vs. spruce based on context. Requires an API key.</span></span>
+        LLM refinement <span class="info-icon">?<span class="info-tip">Uses an AI model (Gemini, OpenAI, or Anthropic) to auto-refine block choices during generation. Requires an API key. You can always manually refine after rendering via the Refine tab.</span></span>
       </div>
       <button class="llm-edit-btn" id="llm-edit-btn">edit</button>
     </div>
@@ -969,10 +1232,10 @@ body {
     <div class="llm-body" id="llm-body">
       <div class="llm-select-wrap">
         <select class="llm-select" id="llm-select">
-          <option value="">No LLM</option>
-          <option value="gemini">Gemini</option>
-          <option value="openai">OpenAI</option>
-          <option value="anthropic">Anthropic</option>
+          <option value="">Select provider&hellip;</option>
+          <option value="gemini">Gemini (API)</option>
+          <option value="openai">OpenAI (API)</option>
+          <option value="anthropic">Anthropic (API)</option>
         </select>
         <span class="llm-select-arrow">&#x25BE;</span>
       </div>
@@ -1016,8 +1279,30 @@ body {
     </div>
   </div>
 
+  <div class="step-info-strip" id="step-info-strip">
+    <div class="step-info-inner" id="step-info-inner"></div>
+  </div>
+
   <div class="viewer-body">
     <div id="viewer-canvas-wrap">
+      <div id="refine-cta" class="refine-cta hidden">
+        <div class="refine-cta-icon">&#x270E;</div>
+        <div class="refine-cta-text">
+          <strong>Refine with AI</strong>
+          <span>Improve block materials &amp; fix structural defects using any LLM</span>
+        </div>
+        <button class="refine-cta-btn" id="refine-cta-btn">Start refining</button>
+        <button class="refine-cta-dismiss" id="refine-cta-dismiss">&times;</button>
+      </div>
+      <div id="pipeline-progress">
+        <div class="pp-inner">
+          <div class="pp-step-num" id="pp-step-num">Step 1 of 7</div>
+          <div class="pp-step-name" id="pp-step-name">Loading mesh</div>
+          <div class="pp-bar-wrap"><div class="pp-bar" id="pp-bar"></div></div>
+          <div class="pp-done-items" id="pp-done-items"></div>
+          <div class="pp-previews" id="pp-previews"></div>
+        </div>
+      </div>
       <button id="hud-toggle" title="Toggle controls (H)">?</button>
       <div id="viewer-hud">
         <kbd>Drag</kbd> orbit &middot; <kbd>Shift</kbd>+drag pan &middot; <kbd>Scroll</kbd> zoom<br>
@@ -1036,6 +1321,7 @@ body {
       <div class="drawer-tabs">
         <button class="drawer-tab active" data-tab="steps">Steps</button>
         <button class="drawer-tab" data-tab="llm">LLM</button>
+        <button class="drawer-tab" data-tab="refine">Refine</button>
       </div>
       <div class="drawer-content">
         <div class="drawer-panel active" id="panel-steps"></div>
@@ -1047,6 +1333,37 @@ body {
             <div class="llm-thinking-wrap">
               <div class="llm-thinking-title">Decisions</div>
               <div id="llm-regions"></div>
+            </div>
+          </div>
+        </div>
+        <div class="drawer-panel" id="panel-refine">
+          <div class="refine-not-ready" id="refine-not-ready">Waiting for pipeline to finish&hellip;</div>
+          <div id="refine-wrap" style="display:none">
+            <div class="llm-manual">
+              <div class="llm-manual-step">
+                <div class="llm-manual-step-header"><span class="llm-manual-step-num">1</span> Copy prompt</div>
+                <div class="llm-manual-prompt" id="llm-manual-prompt">Loading...</div>
+                <div class="llm-manual-btn-row">
+                  <button class="llm-manual-btn" id="llm-manual-copy">Copy prompt</button>
+                  <span class="llm-manual-hint-text">paste into ChatGPT, Claude, or Gemini</span>
+                </div>
+              </div>
+
+              <div class="llm-manual-step" id="llm-manual-images-step">
+                <div class="llm-manual-step-header"><span class="llm-manual-step-num">2</span> Paste images</div>
+                <div class="llm-manual-step-hint">Click each image to copy it, then paste into your LLM chat. Paste all images for best results.</div>
+                <div class="llm-manual-images" id="llm-manual-images"></div>
+              </div>
+
+              <div class="llm-manual-step">
+                <div class="llm-manual-step-header"><span class="llm-manual-step-num">3</span> Paste response</div>
+                <div class="llm-manual-step-hint">Copy the JSON from the LLM's response and paste it below. The LLM can change block materials <em>and</em> fix structural defects (holes, bumps, floating fragments).</div>
+                <textarea class="llm-manual-textarea" id="llm-manual-response" placeholder='{"r0": "minecraft:stone_bricks", "r2": {"block": "minecraft:spruce_planks", "ops": ["fill_holes"]}, "r5": {"ops": ["smooth_surface"]}}'></textarea>
+                <div class="llm-manual-btn-row" style="margin-top:6px">
+                  <button class="llm-manual-btn primary" id="llm-manual-apply" disabled>Apply &amp; rebuild</button>
+                </div>
+                <div class="llm-manual-status" id="llm-manual-status"></div>
+              </div>
             </div>
           </div>
         </div>
@@ -1359,10 +1676,15 @@ const llmToggle = document.getElementById('llm-toggle');
 const llmSection = document.getElementById('llm-section');
 let llmEnabled = false;
 
-function setLlmEnabled(on) {
+const LLM_ENABLED_KEY = 'craftfrom_llm_enabled';
+
+function setLlmEnabled(on, persist = true) {
   llmEnabled = on;
   llmToggle.classList.toggle('on', on);
   llmSection.classList.toggle('off', !on);
+  if (persist) {
+    try { localStorage.setItem(LLM_ENABLED_KEY, on ? '1' : '0'); } catch {}
+  }
 }
 
 llmToggle.addEventListener('click', () => {
@@ -1375,14 +1697,16 @@ async function checkSavedKeys() {
     if (k) {
       activeProvider = p;
       activeKey = k;
-      setLlmEnabled(true);
+      const savedToggle = localStorage.getItem(LLM_ENABLED_KEY);
+      setLlmEnabled(savedToggle !== '0', false);
       lockLlm(p);
       showLlmInfo(p);
       return;
     }
   }
-  setLlmEnabled(false);
-  unlockLlm();
+  activeProvider = '';
+  activeKey = '';
+  setLlmEnabled(false, false);
 }
 
 const KNOWN_TIERS = {
@@ -1510,6 +1834,9 @@ function unlockLlm() {
     llmSaveRow.classList.add('visible');
     llmKeyHint.innerHTML = HINTS[activeProvider] || '';
     llmKeyInput.value = activeKey;
+  } else {
+    llmKeyWrap.classList.remove('visible');
+    llmSaveRow.classList.remove('visible');
   }
 }
 
@@ -1526,7 +1853,6 @@ llmSelect.addEventListener('change', () => {
   if (!p) {
     llmKeyWrap.classList.remove('visible');
     llmSaveRow.classList.remove('visible');
-    llmKeyHint.innerHTML = '';
     return;
   }
   llmKeyWrap.classList.add('visible');
@@ -1542,13 +1868,20 @@ document.getElementById('llm-save-btn').addEventListener('click', async () => {
   await saveKey(p, k);
   activeProvider = p;
   activeKey = k;
+  setLlmEnabled(true);
   lockLlm(p);
   checkLlmLimits(p, k);
 });
 
 document.getElementById('llm-cancel-btn').addEventListener('click', () => {
   if (activeProvider && activeKey) lockLlm(activeProvider);
-  else { llmSelect.value = ''; llmKeyWrap.classList.remove('visible'); llmSaveRow.classList.remove('visible'); }
+  else {
+    activeProvider = ''; activeKey = '';
+    llmSelect.value = '';
+    llmKeyWrap.classList.remove('visible');
+    llmSaveRow.classList.remove('visible');
+    setLlmEnabled(false);
+  }
 });
 
 document.getElementById('llm-clear-btn').addEventListener('click', () => {
@@ -1559,8 +1892,7 @@ document.getElementById('llm-clear-btn').addEventListener('click', () => {
   llmKeyWrap.classList.remove('visible');
   llmSaveRow.classList.remove('visible');
   llmLimitsEl.classList.remove('visible');
-  llmLimitsEl.innerHTML = '';
-  unlockLlm();
+  setLlmEnabled(false);
 });
 
 checkSavedKeys();
@@ -1611,7 +1943,9 @@ scalePresets.forEach(b => b.addEventListener('click', () => {
 }));
 
 /* ═══ Pipeline ═══ */
-const STAGE_NAMES = { 1:'Load Mesh',2:'Voxelize',3:'Map Blocks',4:'LLM Refine',5:'Export',6:'Render' };
+const STAGE_NAMES = { 1:'Load Mesh',2:'Voxelize',3:'Map Blocks',4:'LLM Refine',5:'Export',6:'Render',7:'Manual Refine' };
+const TOTAL_PIPELINE_STAGES = 6;
+const TOTAL_STEPS = 7;
 const STAGE_PREVIEWS = {
   1:[['1_mesh','reference.png']],
   2:[['2_voxels','front.png'],['2_voxels','side.png'],['2_voxels','top.png']],
@@ -1622,6 +1956,57 @@ const STAGE_PREVIEWS = {
 };
 let stageStates = {};
 
+/* ═══ Pipeline progress overlay ═══ */
+const ppOverlay = document.getElementById('pipeline-progress');
+const ppStepNum = document.getElementById('pp-step-num');
+const ppStepName = document.getElementById('pp-step-name');
+const ppBar = document.getElementById('pp-bar');
+const ppDone = document.getElementById('pp-done-items');
+const ppPreviews = document.getElementById('pp-previews');
+
+function showProgress() {
+  ppOverlay.classList.remove('hidden');
+  ppDone.innerHTML = '';
+  ppPreviews.innerHTML = '';
+  ppBar.style.width = '0%';
+  ppStepNum.textContent = 'Starting...';
+  ppStepName.textContent = 'Uploading';
+}
+
+function updateProgress(stage, doneSt, llmSkipped) {
+  const pct = Math.round((doneSt.length / TOTAL_STEPS) * 100);
+  ppBar.style.width = pct + '%';
+  ppStepNum.textContent = `Step ${stage} of ${TOTAL_STEPS}`;
+  ppStepName.textContent = STAGE_NAMES[stage] || 'Processing';
+
+  ppDone.innerHTML = '';
+  for (let i = 1; i <= TOTAL_PIPELINE_STAGES; i++) {
+    if (!doneSt.includes(i) && i !== stage) continue;
+    if (i === stage && !doneSt.includes(i)) continue;
+    const skipped = i === 4 && llmSkipped;
+    const div = document.createElement('div');
+    div.className = 'pp-done-item' + (skipped ? ' skipped' : '');
+    div.innerHTML = `<span class="pp-done-check">${skipped ? '\u2014' : '\u2713'}</span> ${STAGE_NAMES[i]}`;
+    ppDone.appendChild(div);
+  }
+
+  const previews = STAGE_PREVIEWS[Math.max(...doneSt)] || [];
+  if (previews.length && ppPreviews.children.length === 0) {
+    ppPreviews.innerHTML = '';
+    for (const [dir, file] of previews) {
+      const img = document.createElement('img');
+      img.src = `/api/preview/${currentJobId}/${dir}/${file}`;
+      img.alt = file;
+      img.onerror = () => img.remove();
+      ppPreviews.appendChild(img);
+    }
+  }
+}
+
+function hideProgress() {
+  ppOverlay.classList.add('hidden');
+}
+
 runBtn.addEventListener('click', async () => {
   if (!meshInput.files.length) return;
 
@@ -1629,7 +2014,7 @@ runBtn.addEventListener('click', async () => {
   form.append('mesh', meshInput.files[0]);
   if (imageInput.files.length) form.append('image', imageInput.files[0]);
   if (selectedResolution > 0) form.append('resolution', String(selectedResolution));
-  if (activeProvider && activeKey) {
+  if (llmEnabled && activeProvider && activeKey) {
     form.append('llm_key', activeKey);
     form.append('llm_provider', activeProvider);
   }
@@ -1640,27 +2025,55 @@ runBtn.addEventListener('click', async () => {
   const res = await fetch('/api/upload', {method:'POST', body:form});
   const { job_id } = await res.json();
   currentJobId = job_id; currentLlmInfo = null;
+  _refineLoaded = false; _refinePrompt = ''; _refineImageUrls = [];
 
-  switchToViewer(); resetStepBar();
+  document.getElementById('refine-not-ready').style.display = '';
+  document.getElementById('refine-wrap').style.display = 'none';
+  document.getElementById('llm-manual-response').value = '';
+  document.getElementById('llm-manual-status').textContent = '';
+  refineCta.classList.add('hidden');
+  closeStepInfo();
+
+  switchToViewer(); resetStepBar(); showProgress();
 
   runBtn.textContent = 'Processing\u2026';
   const sse = new EventSource(`/api/run/${job_id}`);
+  let _llmSkipped = false;
 
   sse.onmessage = (e) => {
     const d = JSON.parse(e.data);
-    if (d.stage === 'error') { sse.close(); markStepBarError(d.message); runBtn.textContent='Generate'; runBtn.disabled=false; return; }
-    if (d.done) d.done.forEach(s => markStepBarDone(s));
-    if (typeof d.stage === 'number') markStepBarActive(d.stage);
+    if (d.llm_skipped) _llmSkipped = true;
+
+    if (d.stage === 'error') {
+      sse.close(); markStepBarError(d.message); hideProgress();
+      runBtn.textContent='Generate'; runBtn.disabled=false;
+      return;
+    }
+    if (d.done) d.done.forEach(s => {
+      if (s === 4 && _llmSkipped) markStepBarSkipped(s);
+      else markStepBarDone(s);
+    });
+    if (typeof d.stage === 'number') {
+      markStepBarActive(d.stage);
+      updateProgress(d.stage, d.done || [], _llmSkipped);
+    }
     if (d.llm_info) { currentLlmInfo = d.llm_info; renderLlmPanel(d.llm_info); }
     if (d.stage === 'done') {
-      sse.close(); markStepBarDone(6);
+      sse.close();
+      if (_llmSkipped) { markStepBarSkipped(4); showLlmSkipped(); }
+      markStepBarDone(6);
+      updateProgress(6, [1,2,3,4,5,6], _llmSkipped);
       showViewerResult(d.result);
       if (d.llm_info) renderLlmPanel(d.llm_info);
       initViewer(job_id);
       runBtn.textContent='Generate'; runBtn.disabled=false;
+
+      closeStepInfo();
+      markStepBarReady(7);
+      setTimeout(showRefineCta, 800);
     }
   };
-  sse.onerror = () => { sse.close(); runBtn.textContent='Generate'; runBtn.disabled=false; };
+  sse.onerror = () => { sse.close(); hideProgress(); runBtn.textContent='Generate'; runBtn.disabled=false; };
 });
 
 /* ═══ Screens ═══ */
@@ -1674,7 +2087,7 @@ function switchToUpload() {
   const u = document.getElementById('app-upload-wrap'), v = document.getElementById('app-viewer');
   v.classList.remove('visible');
   setTimeout(() => {
-    v.classList.remove('active'); u.classList.remove('hidden','leaving'); destroyViewer(); currentLlmInfo=null;
+    v.classList.remove('active'); u.classList.remove('hidden','leaving'); destroyViewer(); currentLlmInfo=null; _refineLoaded=false; closeStepInfo();
     setTimeout(initHero, 80);
   }, 300);
 }
@@ -1694,24 +2107,29 @@ function resetStepBar() {
   stageStates = {};
   const bar = document.getElementById('step-bar');
   bar.innerHTML = '';
-  for (let i = 1; i <= 6; i++) {
+  for (let i = 1; i <= TOTAL_STEPS; i++) {
     if (i > 1) { const a = document.createElement('span'); a.className='sb-arrow'; a.id=`sb-arrow-${i}`; a.textContent='›'; bar.appendChild(a); }
     const s = document.createElement('div'); s.className='sb-step'; s.id=`sb-${i}`;
     s.innerHTML = `<span class="sb-num">${i}</span><span>${STAGE_NAMES[i]}</span><span class="sb-icon"></span>`;
-    s.addEventListener('click', () => toggleDrawerToStep(i));
+    if (i === 7) {
+      s.addEventListener('click', () => openManualRefineTab());
+    } else {
+      s.addEventListener('click', () => toggleStepInfo(i));
+    }
     bar.appendChild(s); stageStates[i] = 'pending';
   }
   resetDrawerSteps();
 }
 
 function markStepBarActive(st) {
-  if (stageStates[st]==='done') return;
+  if (stageStates[st]==='done' || stageStates[st]==='skipped') return;
   stageStates[st] = 'active';
   const el = document.getElementById(`sb-${st}`);
   if (!el) return;
   el.className = 'sb-step active';
   el.querySelector('.sb-icon').innerHTML = '<span class="sb-spinner"></span>';
   updateDrawerStep(st, 'active');
+  if (_openStep === st) renderStepInfo(st);
 }
 
 function markStepBarDone(st) {
@@ -1723,13 +2141,46 @@ function markStepBarDone(st) {
   el.querySelector('.sb-icon').innerHTML = '<span class="sb-check">\u2713</span>';
   setTimeout(()=>el.classList.remove('just-done'), 400);
   const ar = document.getElementById(`sb-arrow-${st}`);
-  if (ar) ar.classList.add('lit');
+  if (ar && !ar.classList.contains('skipped')) ar.classList.add('lit');
   updateDrawerStep(st, 'done');
   loadDrawerPreviews(st);
+
+  if ((STAGE_PREVIEWS[st] || []).length) {
+    _openStep = st;
+    renderStepInfo(st);
+    siStrip.classList.add('open');
+  } else if (_openStep === st) {
+    renderStepInfo(st);
+  }
+}
+
+function markStepBarSkipped(st) {
+  if (stageStates[st]==='done') return;
+  stageStates[st] = 'skipped';
+  const el = document.getElementById(`sb-${st}`);
+  if (!el) return;
+  el.className = 'sb-step skipped';
+  el.querySelector('.sb-icon').innerHTML = '<span class="sb-skip-icon">\u2014</span>';
+  const ar = document.getElementById(`sb-arrow-${st}`);
+  if (ar) { ar.classList.remove('lit'); ar.classList.add('skipped'); }
+  const arNext = document.getElementById(`sb-arrow-${st+1}`);
+  if (arNext) { arNext.classList.remove('lit'); arNext.classList.add('skipped'); }
+  updateDrawerStep(st, 'skipped');
+}
+
+function markStepBarReady(st) {
+  stageStates[st] = 'ready';
+  const el = document.getElementById(`sb-${st}`);
+  if (!el) return;
+  el.className = 'sb-step ready';
+  el.querySelector('.sb-icon').innerHTML = '<span class="sb-ready-icon">&#x270E;</span>';
+  const ar = document.getElementById(`sb-arrow-${st}`);
+  if (ar) ar.classList.add('lit');
+  updateDrawerStep(st, 'ready');
 }
 
 function markStepBarError(msg) {
-  for (let i=1;i<=6;i++) {
+  for (let i=1;i<=TOTAL_STEPS;i++) {
     if (stageStates[i]==='active') {
       stageStates[i]='error';
       const el = document.getElementById(`sb-${i}`);
@@ -1738,6 +2189,78 @@ function markStepBarError(msg) {
       break;
     }
   }
+}
+
+/* ═══ Step info strip ═══ */
+const siStrip = document.getElementById('step-info-strip');
+const siInner = document.getElementById('step-info-inner');
+let _openStep = 0;
+
+const STEP_META = {
+  1: () => 'Converts image/mesh into a 3D model (.glb)',
+  2: () => 'Fills a 3D grid with colored voxel cubes',
+  3: () => 'Maps each voxel to the closest Minecraft block',
+  4: () => currentLlmInfo ? `${currentLlmInfo.provider||'LLM'} \u2014 ${currentLlmInfo.blocks_changed||0} blocks changed` : 'AI-powered block material upgrades',
+  5: () => 'Exports structure as .litematic file',
+  6: () => 'Renders preview images from multiple angles',
+  7: () => 'Manually refine blocks & structure with any LLM',
+};
+
+function toggleStepInfo(st) {
+  if (_openStep === st && siStrip.classList.contains('open')) {
+    siStrip.classList.remove('open');
+    _openStep = 0;
+    return;
+  }
+  _openStep = st;
+  renderStepInfo(st);
+  siStrip.classList.add('open');
+}
+
+function renderStepInfo(st) {
+  const state = stageStates[st] || 'pending';
+  const previews = STAGE_PREVIEWS[st] || [];
+  const metaFn = STEP_META[st];
+
+  let html = `<span class="si-label">${STAGE_NAMES[st]}<span class="si-status-tag ${state}">${state}</span></span>`;
+
+  if (state === 'pending') {
+    html += '<div class="si-meta">Waiting&hellip;</div>';
+  } else {
+    if (state === 'active') {
+      html += '<div class="si-meta"><span class="sb-spinner"></span> Running&hellip;</div>';
+    } else if (metaFn) {
+      html += `<div class="si-meta">${metaFn()}</div>`;
+    }
+    if (previews.length && currentJobId) {
+      html += '<div class="si-previews">';
+      for (const [dir, file] of previews) {
+        html += `<img src="/api/preview/${currentJobId}/${dir}/${file}" alt="${file}" onerror="this.remove()">`;
+      }
+      html += '</div>';
+    }
+  }
+
+  siInner.innerHTML = html;
+}
+
+function closeStepInfo() {
+  siStrip.classList.remove('open');
+  _openStep = 0;
+}
+
+/* ═══ Refine CTA ═══ */
+const refineCta = document.getElementById('refine-cta');
+document.getElementById('refine-cta-btn').addEventListener('click', () => {
+  refineCta.classList.add('hidden');
+  openManualRefineTab();
+});
+document.getElementById('refine-cta-dismiss').addEventListener('click', () => {
+  refineCta.classList.add('hidden');
+});
+
+function showRefineCta() {
+  refineCta.classList.remove('hidden');
 }
 
 /* ═══ Drawer ═══ */
@@ -1759,7 +2282,10 @@ function toggleDrawerToStep(st) {
   if (c) { document.querySelectorAll('.step-card').forEach(x=>x.classList.remove('expanded')); c.classList.add('expanded'); setTimeout(()=>c.scrollIntoView({behavior:'smooth',block:'nearest'}),50); }
 }
 
-document.querySelectorAll('.drawer-tab').forEach(t => t.addEventListener('click', ()=>activateTab(t.dataset.tab)));
+document.querySelectorAll('.drawer-tab').forEach(t => t.addEventListener('click', () => {
+  activateTab(t.dataset.tab);
+  if (t.dataset.tab === 'refine' && stageStates[7] === 'ready') startManualRefine();
+}));
 
 function activateTab(id) {
   document.querySelectorAll('.drawer-tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===id));
@@ -1768,7 +2294,7 @@ function activateTab(id) {
 
 function resetDrawerSteps() {
   const p = document.getElementById('panel-steps'); p.innerHTML='';
-  for (let i=1;i<=6;i++) {
+  for (let i=1;i<=TOTAL_STEPS;i++) {
     const c = document.createElement('div'); c.className='step-card'; c.id=`scard-${i}`;
     c.innerHTML=`<div class="step-card-header" onclick="this.parentElement.classList.toggle('expanded')"><span>${i}. ${STAGE_NAMES[i]}</span><span class="scc-status" id="scc-status-${i}">pending</span></div><div class="step-card-body"><div class="preview-grid" id="scard-preview-${i}"></div></div>`;
     p.appendChild(c);
@@ -1781,6 +2307,8 @@ function updateDrawerStep(st,state,msg) {
   if (!el) return;
   if (state==='active') el.innerHTML='<span class="sb-spinner"></span> running';
   else if (state==='done') { el.textContent='\u2713 done'; card?.classList.add('done-card'); }
+  else if (state==='skipped') { el.textContent='\u2014 skipped'; card?.classList.add('skipped-card'); }
+  else if (state==='ready') { el.textContent='\u270E ready'; card?.classList.add('ready-card'); }
   else if (state==='error') el.textContent='\u2717 '+(msg||'error');
 }
 
@@ -1797,6 +2325,157 @@ function loadDrawerPreviews(st) {
 }
 
 /* ═══ LLM Panel ═══ */
+function showLlmSkipped() {
+  const el = document.getElementById('llm-no-data');
+  el.innerHTML = `LLM refinement skipped <div class="llm-skip-reason">No API key configured. You can still manually refine using the Refine tab.</div>`;
+  el.style.display = '';
+  document.getElementById('llm-panel-content').style.display = 'none';
+}
+
+function openManualRefineTab() {
+  if (!drawer.classList.contains('open')) { drawer.classList.add('open'); detailsBtn.textContent = 'Close'; }
+  activateTab('refine');
+  startManualRefine();
+}
+
+let _refineLoaded = false;
+let _refinePrompt = '';
+let _refineImageUrls = [];
+
+async function startManualRefine() {
+  if (!currentJobId) return;
+  document.getElementById('refine-not-ready').style.display = 'none';
+  document.getElementById('refine-wrap').style.display = 'block';
+  if (_refineLoaded) return;
+  _refineLoaded = true;
+
+  const promptEl = document.getElementById('llm-manual-prompt');
+  const imagesEl = document.getElementById('llm-manual-images');
+  promptEl.textContent = 'Generating prompt...';
+  imagesEl.innerHTML = '';
+  _refinePrompt = '';
+  _refineImageUrls = [];
+
+  try {
+    const resp = await fetch(`/api/prompt/${currentJobId}`);
+    const data = await resp.json();
+    if (data.error) { promptEl.textContent = `Error: ${data.error}`; return; }
+    _refinePrompt = data.prompt;
+    promptEl.textContent = data.prompt;
+
+    if (data.images?.length) {
+      _refineImageUrls = data.images.map(i => ({ url: i.url, label: i.label }));
+      for (const img of data.images) {
+        const card = document.createElement('div');
+        card.className = 'llm-manual-img-card';
+        card.dataset.imgUrl = img.url;
+        card.title = `Click to copy "${img.label}" to clipboard`;
+        card.innerHTML = `<img src="${img.url}" alt="${img.label}"><div class="llm-manual-img-label">${img.label}</div><div class="llm-manual-img-copy">Click to copy</div>`;
+        card.addEventListener('click', () => copyImageToClipboard(card, img.url));
+        imagesEl.appendChild(card);
+      }
+    } else {
+      document.getElementById('llm-manual-images-step').style.display = 'none';
+    }
+  } catch (e) {
+    promptEl.textContent = `Error: ${e.message}`;
+  }
+}
+
+async function copyImageToClipboard(card, url) {
+  const overlay = card.querySelector('.llm-manual-img-copy');
+  overlay.textContent = 'Copying…';
+  try {
+    const resp = await fetch(url);
+    const blob = await resp.blob();
+    const pngBlob = await _ensurePng(blob, url);
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })]);
+    card.classList.add('copied-card');
+    overlay.textContent = '✓ Copied — paste into chat';
+    setTimeout(() => { overlay.textContent = 'Click to copy'; card.classList.remove('copied-card'); }, 3000);
+  } catch (e) {
+    overlay.textContent = 'Failed — drag instead';
+    setTimeout(() => { overlay.textContent = 'Click to copy'; }, 2500);
+  }
+}
+
+function _ensurePng(blob, url) {
+  if (blob.type === 'image/png') return Promise.resolve(blob);
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      c.getContext('2d').drawImage(img, 0, 0);
+      c.toBlob(b => resolve(b), 'image/png');
+    };
+    img.src = url;
+  });
+}
+
+document.addEventListener('click', (e) => {
+  if (e.target.id === 'llm-manual-copy') {
+    const text = _refinePrompt || document.getElementById('llm-manual-prompt').textContent;
+    if (!text) return;
+    const btn = e.target;
+    navigator.clipboard.writeText(text).then(() => {
+      btn.textContent = '✓ Copied!';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = 'Copy prompt'; btn.classList.remove('copied'); }, 2000);
+    });
+  }
+});
+
+const manualResponse = document.getElementById('llm-manual-response');
+const manualApply = document.getElementById('llm-manual-apply');
+manualResponse.addEventListener('input', () => {
+  manualApply.disabled = !manualResponse.value.trim();
+});
+
+manualApply.addEventListener('click', async () => {
+  if (!currentJobId || !manualResponse.value.trim()) return;
+  const statusEl = document.getElementById('llm-manual-status');
+  statusEl.className = 'llm-manual-status';
+  statusEl.textContent = 'Applying...';
+  manualApply.disabled = true;
+
+  try {
+    const form = new FormData();
+    form.append('response', manualResponse.value.trim());
+    const resp = await fetch(`/api/apply-llm/${currentJobId}`, { method: 'POST', body: form });
+    const data = await resp.json();
+
+    if (data.error) {
+      statusEl.className = 'llm-manual-status err';
+      statusEl.textContent = data.error;
+      manualApply.disabled = false;
+      return;
+    }
+
+    const info = data.llm_info;
+    statusEl.className = 'llm-manual-status ok';
+    const blockMsg = info.blocks_changed ? `${info.blocks_changed} blocks changed` : '';
+    const opsCount = info.structural_ops ? Object.keys(info.structural_ops).length : 0;
+    const opsMsg = opsCount ? `${opsCount} structural fixes` : '';
+    const parts = [blockMsg, opsMsg].filter(Boolean);
+    statusEl.textContent = `\u2713 Applied \u2014 ${parts.join(', ') || 'no changes'}`;
+
+    currentLlmInfo = info;
+    renderLlmPanel(info);
+
+    if (data.result) showViewerResult(data.result);
+
+    markStepBarDone(7);
+
+    initViewer(currentJobId);
+  } catch (e) {
+    statusEl.className = 'llm-manual-status err';
+    statusEl.textContent = e.message;
+    manualApply.disabled = false;
+  }
+});
+
 function renderLlmPanel(info) {
   if (!info || info.status==='skipped' || info.status==='running') return;
   document.getElementById('llm-no-data').style.display='none';
@@ -1811,6 +2490,7 @@ function renderLlmPanel(info) {
     <div class="llm-s-item"><span class="llm-s-val">${(info.output_tokens||0).toLocaleString()}</span><span class="llm-s-lbl">Out tokens</span></div>
     <div class="llm-s-item"><span class="llm-s-val">${latency}</span><span class="llm-s-lbl">Latency</span></div>
     <div class="llm-s-item"><span class="llm-s-val">${(info.blocks_changed||0).toLocaleString()}</span><span class="llm-s-lbl">Changed</span></div>
+    <div class="llm-s-item"><span class="llm-s-val">${Object.keys(info.structural_ops||{}).length||'\u2014'}</span><span class="llm-s-lbl">Struct fixes</span></div>
     <div class="llm-s-item"><span class="llm-s-val" style="color:${isErr?'var(--red)':'var(--green)'}">${info.status}</span><span class="llm-s-lbl">Status</span></div>`;
 
   const apiSec = document.getElementById('llm-api-section');
@@ -1839,10 +2519,15 @@ function renderLlmPanel(info) {
   if (info.regions?.length) {
     info.regions.forEach((r,i) => {
       const dec = info.decisions?.[r.id];
+      const ops = info.structural_ops?.[r.id];
       const d = document.createElement('div'); d.className='llm-region'; d.style.animationDelay=`${i*.04}s`;
       let detail = `${r.band} \u00b7 ${r.count} blocks \u00b7 ${r.blocks.join(', ')}`;
       if (dec) detail += `<br><span class="llm-region-arrow">\u2192</span><span class="llm-region-decision">${dec}</span>`;
       else detail += `<br><span style="color:var(--text3)">kept</span>`;
+      if (ops) {
+        const opsTags = Object.entries(ops).map(([op, n]) => `<span class="llm-op-tag">${op.replace(/_/g,' ')} (${n})</span>`).join('');
+        detail += `<br>${opsTags}`;
+      }
       d.innerHTML=`<div class="llm-region-header"><div class="llm-region-swatch" style="background:rgb(${r.avg_rgb.join(',')})"></div><span class="llm-region-name">${r.id}</span><span class="llm-region-count">${r.count}</span></div><div class="llm-region-detail">${detail}</div>`;
       rg.appendChild(d);
     });
@@ -1902,9 +2587,9 @@ async function initViewer(jobId) {
   vMouse = new THREE.Vector2();
 
   const resp = await fetch(`/api/viewer/${jobId}/blocks.json`);
-  if (!resp.ok) { console.warn('Job expired or not found'); return; }
+  if (!resp.ok) { console.warn('Job expired or not found'); hideProgress(); return; }
   const data = await resp.json();
-  if (data.error||!data.blocks?.length) { console.warn(data.error||'No blocks'); return; }
+  if (data.error||!data.blocks?.length) { console.warn(data.error||'No blocks'); hideProgress(); return; }
 
   vPaletteData = data.palette;
   const { group, lookup } = buildMesh(data);
@@ -1923,6 +2608,8 @@ async function initViewer(jobId) {
   const grid = new THREE.GridHelper(maxD*2, Math.floor(maxD*2), 0x252829, 0x1a1d1f);
   grid.position.set(center.x, box.min.y-.5, center.z);
   vScene.add(grid);
+
+  hideProgress();
 
   let last=performance.now();
   (function animate(now) {

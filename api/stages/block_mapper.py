@@ -121,13 +121,22 @@ def run(voxel_grid: VoxelGrid, config: PipelineConfig) -> BlockGrid:
 
     indices = _hue_aware_match(voxel_labs, tree, block_colors_lab)
 
+    raw_block_at: dict[tuple, int] = {}
+    positions: list[tuple] = []
     for i in range(len(occupied[0])):
         x, y, z = int(occupied[0][i]), int(occupied[1][i]), int(occupied[2][i])
-        idx = indices[i]
-        color = voxel_rgbs[i]
+        raw_block_at[(x, y, z)] = int(indices[i])
+        positions.append((x, y, z))
+
+    smoothed = _spatial_mode_filter(raw_block_at, positions, radius=2, passes=3)
+
+    for pos in positions:
+        idx = smoothed[pos]
+        x, y, z = pos
+        color = grid[x, y, z, :3]
         blocks.append(BlockMapping(
             block_id=block_ids[idx],
-            position=(x, y, z),
+            position=pos,
             reason=f"lab_match rgb({color[0]},{color[1]},{color[2]})",
         ))
 
@@ -140,6 +149,65 @@ def run(voxel_grid: VoxelGrid, config: PipelineConfig) -> BlockGrid:
         dimensions=voxel_grid.resolution,
         palette=[b["id"] for b in palette],
     )
+
+
+def _spatial_mode_filter(
+    block_at: dict[tuple, int],
+    positions: list[tuple],
+    radius: int = 2,
+    passes: int = 3,
+) -> dict[tuple, int]:
+    """Replace each block's palette index with the most common index in its
+    local neighborhood (Chebyshev cube of given radius). Multiple passes
+    propagate consensus outward, eliminating salt-and-pepper noise from
+    per-voxel color matching.
+
+    This is the standard approach for voxel art: individual color matching
+    picks the closest palette entry per voxel, but adjacent voxels with
+    slightly different texture colors land on different-but-similar blocks.
+    The mode filter unifies them.
+    """
+    from collections import Counter
+
+    occupied = set(block_at.keys())
+    current = dict(block_at)
+
+    offsets = [
+        (dx, dy, dz)
+        for dx in range(-radius, radius + 1)
+        for dy in range(-radius, radius + 1)
+        for dz in range(-radius, radius + 1)
+    ]
+
+    candidates = set(positions)
+    for p in range(passes):
+        updated = dict(current)
+        changed = 0
+        next_candidates = set()
+        for pos in candidates:
+            x, y, z = pos
+            counts: Counter = Counter()
+            for dx, dy, dz in offsets:
+                npos = (x + dx, y + dy, z + dz)
+                if npos in current:
+                    counts[current[npos]] += 1
+
+            mode_idx = counts.most_common(1)[0][0]
+            if mode_idx != current[pos]:
+                updated[pos] = mode_idx
+                changed += 1
+                for dx, dy, dz in offsets:
+                    npos = (x + dx, y + dy, z + dz)
+                    if npos in occupied:
+                        next_candidates.add(npos)
+
+        current = updated
+        if changed == 0:
+            break
+        candidates = next_candidates
+        log.info(f"Mode filter pass {p+1}: {changed} blocks changed")
+
+    return current
 
 
 def _apply_semantic_rules(

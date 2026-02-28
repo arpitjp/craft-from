@@ -23,7 +23,10 @@ from fastapi.staticfiles import StaticFiles
 
 from api.config import load_config
 from api.core.types import ImageInput, PipelineConfig
-from api.stages import image_to_3d, voxelize, map_blocks, semantic_refine, export_schematic
+from api.stages import (
+    image_to_3d, voxelize, map_blocks, semantic_refine,
+    semantic_prepare, semantic_apply, export_schematic,
+)
 from api.utils.preview import (
     save_stage1_output, save_stage2_output,
     save_stage3_output, save_stage4_output,
@@ -78,6 +81,10 @@ def _run_pipeline_stages(job_id: str, mesh_path: Path, image_path: Optional[Path
         save_stage3_output(blocks, voxels, config.output_dir)
         job["stages_done"].append(3)
 
+        job["_blocks"] = blocks
+        job["_voxels"] = voxels
+        job["_config"] = config
+
         llm_key = job.get("llm_key", "")
         llm_provider = job.get("llm_provider", "")
         if llm_key and llm_provider:
@@ -89,9 +96,12 @@ def _run_pipeline_stages(job_id: str, mesh_path: Path, image_path: Optional[Path
                     api_key=llm_key, provider=llm_provider,
                 )
                 job["llm_info"] = llm_info
+                job["_blocks"] = blocks
                 save_stage3_output(blocks, voxels, config.output_dir)
             except Exception as e:
                 job["llm_info"] = {"status": f"error: {e}", "provider": llm_provider}
+        else:
+            job["llm_skipped"] = True
         job["stages_done"].append(4)
 
         job["stage"] = 5
@@ -348,6 +358,8 @@ async def run_job(job_id: str):
                 data = {"stage": "done", "result": job["result"]}
                 if job.get("llm_info"):
                     data["llm_info"] = job["llm_info"]
+                if job.get("llm_skipped"):
+                    data["llm_skipped"] = True
                 yield f"data: {json.dumps(data)}\n\n"
                 break
 
@@ -359,6 +371,8 @@ async def run_job(job_id: str):
                 }
                 if current == 4 and job.get("llm_info"):
                     evt["llm_info"] = job["llm_info"]
+                if job.get("llm_skipped"):
+                    evt["llm_skipped"] = True
                 yield f"data: {json.dumps(evt)}\n\n"
                 last_stage = current
 
@@ -396,3 +410,86 @@ async def viewer_blocks(job_id: str):
     if not path.exists():
         return {"error": "Viewer data not ready"}
     return FileResponse(path, media_type="application/json")
+
+
+@app.get("/api/prompt/{job_id}")
+async def get_prompt(job_id: str):
+    """Generate the LLM prompt for a completed job (manual copy/paste flow)."""
+    if job_id not in _jobs:
+        return {"error": "Job not found"}
+    job = _jobs[job_id]
+    blocks = job.get("_blocks")
+    voxels = job.get("_voxels")
+    config = job.get("_config")
+    if blocks is None or voxels is None:
+        return {"error": "Pipeline state not available (job not ready or expired)"}
+
+    loop = asyncio.get_event_loop()
+    prepared = await loop.run_in_executor(
+        None, semantic_prepare, blocks, voxels, config,
+    )
+    if prepared is None:
+        return {"error": "No regions found for LLM refinement"}
+
+    job["_prepared"] = prepared
+
+    output_dir = job["output_dir"]
+    images = []
+    for subdir, filename, label in [
+        ("1_mesh", "reference.png", "Reference image"),
+        ("2_voxels", "front.png", "Voxel front view"),
+        ("2_voxels", "side.png", "Voxel side view"),
+        ("3_blocks", "block_preview_front.png", "Block mapping preview"),
+    ]:
+        path = output_dir / subdir / filename
+        if path.exists():
+            images.append({
+                "url": f"/api/preview/{job_id}/{subdir}/{filename}",
+                "label": label,
+            })
+
+    return {"prompt": prepared["prompt"], "images": images}
+
+
+@app.post("/api/apply-llm/{job_id}")
+async def apply_llm(job_id: str, response: str = Form(...)):
+    """Apply a user-pasted LLM response and re-export the schematic."""
+    if job_id not in _jobs:
+        return {"error": "Job not found"}
+    job = _jobs[job_id]
+    prepared = job.get("_prepared")
+    if prepared is None:
+        return {"error": "Call /api/prompt/{job_id} first to prepare regions"}
+
+    config = job.get("_config")
+    output_dir = job["output_dir"]
+
+    loop = asyncio.get_event_loop()
+    blocks, llm_info = await loop.run_in_executor(
+        None, semantic_apply, response, prepared,
+    )
+
+    if llm_info["status"] != "ok":
+        return {"error": f"Could not apply: {llm_info['status']}", "llm_info": llm_info}
+
+    save_stage3_output(blocks, job["_voxels"], config.output_dir)
+
+    result = export_schematic(blocks, config)
+    save_stage4_output(result.path, result.block_count, result.dimensions, config.output_dir)
+
+    _generate_viewer_json(result.path, output_dir)
+
+    render_block_grid(blocks, config.output_dir)
+
+    job["llm_info"] = llm_info
+    job["llm_skipped"] = False
+    job["result"] = {
+        "block_count": result.block_count,
+        "dimensions": list(result.dimensions),
+    }
+
+    return {
+        "ok": True,
+        "llm_info": llm_info,
+        "result": job["result"],
+    }

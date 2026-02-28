@@ -144,37 +144,14 @@ function ensureViewer() {
 
 async function uploadFiles(fileList) {
   loading.style.display = 'block';
-
-  const jsonFiles = [];
-  const serverFiles = [];
-
-  for (const file of fileList) {
-    const ext = file.name.split('.').pop().toLowerCase();
-    if (ext === 'json') jsonFiles.push(file);
-    else serverFiles.push(file);
-  }
-
   ensureViewer();
 
-  for (const file of jsonFiles) {
-    await viewer.loadFromFile(file);
-  }
-
-  if (serverFiles.length > 0) {
-    const form = new FormData();
-    for (const file of serverFiles) form.append('files', file);
-
+  for (const file of fileList) {
     try {
-      const resp = await fetch('/api/upload-multiple', { method: 'POST', body: form });
-      const results = await resp.json();
-      for (const result of results) {
-        if (result.error) continue;
-        const schemResp = await fetch(`/api/schematics/${result.id}`);
-        const data = await schemResp.json();
-        viewer.addSchematic(result.name, { blocks: data.blocks, palette: data.palette }, result.id);
-      }
+      await viewer.loadFromFile(file);
     } catch (err) {
-      loading.innerHTML = `<div style="color:#f87171">Error: ${err.message}</div>`;
+      console.error(`Failed to load ${file.name}:`, err);
+      loading.innerHTML = `<div style="color:#f87171">Error loading ${file.name}: ${err.message}</div>`;
       setTimeout(() => { loading.style.display = 'none'; loading.innerHTML = '<div class="spinner-bar"></div>Parsing schematics…'; }, 3000);
       return;
     }
