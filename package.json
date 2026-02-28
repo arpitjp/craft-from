@@ -9,6 +9,6 @@
     "bot": "cd bot && node builder.js"
   },
   "dependencies": {
-    "@craftfrom/schema-viewer": "file:../craft-from-schema-viewer"
+    "@craftfrom/schema-viewer": "github:arpitjp/craft-from-schema-viewer"
   }
 }
