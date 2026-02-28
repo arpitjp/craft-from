@@ -1,0 +1,14 @@
+{
+  "name": "craft-from",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Image → Minecraft structure generator pipeline",
+  "scripts": {
+    "viewer": "python viewer/server.py",
+    "web": "python web/server.py",
+    "bot": "cd bot && node builder.js"
+  },
+  "dependencies": {
+    "@craftfrom/schema-viewer": "file:../craft-from-schema-viewer"
+  }
+}

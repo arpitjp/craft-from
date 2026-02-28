@@ -1,0 +1,17 @@
+{
+  "name": "craftfrom-bot",
+  "version": "0.1.0",
+  "description": "Mineflayer bot that builds structures from .litematic schematics",
+  "main": "builder.js",
+  "scripts": {
+    "start": "node builder.js",
+    "build": "node builder.js"
+  },
+  "dependencies": {
+    "mineflayer": "^4.20.1",
+    "mineflayer-pathfinder": "^2.4.5",
+    "mineflayer-schem": "^1.3.6",
+    "prismarine-schematic": "^1.5.0",
+    "prismarine-viewer": "^1.28.0"
+  }
+}

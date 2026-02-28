@@ -1,0 +1,9 @@
+# GPU dependencies for running TripoSR/TRELLIS locally (Colab)
+torch>=2.1.0
+torchvision>=0.16.0
+torchaudio>=2.1.0
+transformers>=4.36.0
+accelerate>=0.25.0
+huggingface_hub>=0.20.0
+rembg>=2.0.50
+onnxruntime>=1.16.0

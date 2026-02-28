@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.env
+output/
+*.litematic
+*.schem
+*.nbt
+*.obj
+*.glb
+*.gltf
+node_modules/
+.DS_Store
+*.egg-info/
+dist/
+build/
+.venv/
+.pytest_cache/

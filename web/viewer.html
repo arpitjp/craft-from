@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CraftFrom — Viewer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0a0a;
+  --border: #222;
+  --text: #e8e8e8;
+  --text2: #666;
+  --text3: #444;
+  --surface: #111;
+  --mono: 'JetBrains Mono', monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--bg); overflow: hidden; font-family: var(--mono); }
+::selection { background: #fff; color: #000; }
+canvas { display: block; }
+
+/* Pixel grid bg */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px);
+  background-size: 16px 16px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+#hud {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  color: var(--text3);
+  font-size: 10px;
+  background: rgba(0,0,0,0.85);
+  padding: 12px 16px;
+  line-height: 2;
+  pointer-events: none;
+  max-width: 300px;
+  border: 1px solid var(--border);
+  z-index: 10;
+}
+
+#hud h3 {
+  color: var(--text2);
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  margin-bottom: 8px;
+}
+
+#hud kbd {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text2);
+  background: var(--surface);
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+}
+
+#info {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  color: var(--text3);
+  font-size: 10px;
+  background: rgba(0,0,0,0.7);
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  z-index: 10;
+}
+
+#title-bar {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  font-size: 10px;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  z-index: 10;
+}
+
+#loading {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--text2);
+  font-size: 12px;
+  text-align: center;
+  z-index: 10;
+}
+
+.spinner-bar {
+  width: 40px;
+  height: 2px;
+  background: var(--border);
+  position: relative;
+  overflow: hidden;
+  margin: 0 auto 16px;
+}
+
+.spinner-bar::after {
+  content: '';
+  position: absolute;
+  left: -50%;
+  width: 50%;
+  height: 100%;
+  background: #fff;
+  animation: slide 0.8s ease-in-out infinite;
+}
+
+@keyframes slide {
+  0% { left: -50%; }
+  100% { left: 100%; }
+}
+
+/* Bottom pixel border */
+.mc-bottom {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  display: flex;
+  pointer-events: none;
+  z-index: 10;
+  opacity: 0.06;
+}
+
+.mc-bottom span {
+  width: 16px;
+  height: 3px;
+  background: #fff;
+}
+.mc-bottom span:nth-child(even) { opacity: 0.5; }
+</style>
+</head>
+<body>
+
+<div id="loading">
+  <div class="spinner-bar"></div>
+  Loading schematic…
+</div>
+
+<div id="hud" style="display:none">
+  <h3>Controls</h3>
+  <kbd>Drag</kbd> orbit · <kbd>Shift</kbd>+drag pan<br>
+  <kbd>Scroll</kbd> zoom<br>
+  <kbd>WASD</kbd> move · <kbd>Space</kbd>/<kbd>Shift</kbd> up/down<br>
+  <kbd>QE</kbd> yaw · <kbd>RF</kbd> pitch<br>
+  <kbd>1-6</kbd> snap view · <kbd>0</kbd> reset
+</div>
+
+<div id="title-bar">craftfrom</div>
+<div id="info"></div>
+<div class="mc-bottom" id="mc-bottom"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const bottom = document.getElementById('mc-bottom');
+const bCount = Math.ceil(window.innerWidth / 16);
+for (let i = 0; i < bCount; i++) {
+  bottom.appendChild(document.createElement('span'));
+}
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0a0a);
+
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 5000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.rotateSpeed = 0.8;
+controls.panSpeed = 1.0;
+controls.zoomSpeed = 1.2;
+controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+dirLight.position.set(1, 2, 1.5);
+scene.add(dirLight);
+const backLight = new THREE.DirectionalLight(0xffffff, 0.2);
+backLight.position.set(-1, 0.5, -1);
+scene.add(backLight);
+
+function buildMesh(data) {
+  const { blocks, palette } = data;
+  const colorGroups = {};
+
+  for (const [x, y, z, bid] of blocks) {
+    if (!colorGroups[bid]) colorGroups[bid] = [];
+    colorGroups[bid].push(x, y, z);
+  }
+
+  const group = new THREE.Group();
+  const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+
+  for (const [bid, coords] of Object.entries(colorGroups)) {
+    const rgb = palette[bid] || [128, 128, 128];
+    const color = new THREE.Color(rgb[0] / 255, rgb[1] / 255, rgb[2] / 255);
+    const mat = new THREE.MeshLambertMaterial({ color });
+    const count = coords.length / 3;
+    const mesh = new THREE.InstancedMesh(boxGeo, mat, count);
+
+    const dummy = new THREE.Object3D();
+    for (let i = 0; i < count; i++) {
+      dummy.position.set(coords[i * 3], coords[i * 3 + 1], coords[i * 3 + 2]);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    group.add(mesh);
+  }
+  return group;
+}
+
+const keys = {};
+addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; });
+addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+function snapView(name) {
+  const center = controls.target.clone();
+  const dist = camera.position.distanceTo(center);
+  const dirs = {
+    '1': [0, 0, -1], '2': [0, 0, 1],
+    '3': [-1, 0, 0], '4': [1, 0, 0],
+    '5': [0, 1, 0],  '6': [0, -1, 0],
+  };
+  const d = dirs[name];
+  if (!d) return;
+  camera.position.set(center.x + d[0] * dist, center.y + d[1] * dist, center.z + d[2] * dist);
+  camera.lookAt(center);
+  controls.update();
+}
+
+let initialCameraPos, initialTarget;
+
+function processKeyboard(dt) {
+  const speed = 40 * dt;
+  const rotSpeed = 1.5 * dt;
+
+  const forward = new THREE.Vector3();
+  camera.getWorldDirection(forward);
+  forward.y = 0; forward.normalize();
+  const right = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
+
+  if (keys['w'] || keys['arrowup'])    { controls.target.addScaledVector(forward, speed);  camera.position.addScaledVector(forward, speed); }
+  if (keys['s'] || keys['arrowdown'])   { controls.target.addScaledVector(forward, -speed); camera.position.addScaledVector(forward, -speed); }
+  if (keys['a'] || keys['arrowleft'])   { controls.target.addScaledVector(right, -speed);   camera.position.addScaledVector(right, -speed); }
+  if (keys['d'] || keys['arrowright'])  { controls.target.addScaledVector(right, speed);    camera.position.addScaledVector(right, speed); }
+  if (keys[' '])     { camera.position.y += speed; controls.target.y += speed; }
+  if (keys['shift']) { camera.position.y -= speed; controls.target.y -= speed; }
+
+  if (keys['q']) controls.autoRotateSpeed = -30;
+  else if (keys['e']) controls.autoRotateSpeed = 30;
+  else controls.autoRotateSpeed = 0;
+  controls.autoRotate = keys['q'] || keys['e'];
+
+  if (keys['r']) { const off = camera.position.clone().sub(controls.target); off.applyAxisAngle(right, -rotSpeed); camera.position.copy(controls.target).add(off); }
+  if (keys['f']) { const off = camera.position.clone().sub(controls.target); off.applyAxisAngle(right, rotSpeed);  camera.position.copy(controls.target).add(off); }
+
+  for (const k of ['1','2','3','4','5','6']) { if (keys[k]) { snapView(k); keys[k] = false; } }
+  if (keys['0']) { camera.position.copy(initialCameraPos); controls.target.copy(initialTarget); controls.update(); keys['0'] = false; }
+}
+
+async function main() {
+  const resp = await fetch('blocks.json');
+  if (!resp.ok) throw new Error(`Failed to load blocks.json: ${resp.status}`);
+  const data = await resp.json();
+
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('hud').style.display = 'block';
+
+  if (!data.blocks || data.blocks.length === 0) {
+    document.getElementById('info').textContent = 'No blocks found in schematic';
+    return;
+  }
+
+  const mesh = buildMesh(data);
+  scene.add(mesh);
+
+  const box = new THREE.Box3().setFromObject(mesh);
+  const center = box.getCenter(new THREE.Vector3());
+  const bsize = box.getSize(new THREE.Vector3());
+  const maxDim = Math.max(bsize.x, bsize.y, bsize.z);
+
+  controls.target.copy(center);
+  camera.position.set(center.x + maxDim * 0.8, center.y + maxDim * 0.5, center.z + maxDim * 1.2);
+  camera.lookAt(center);
+  controls.update();
+
+  initialCameraPos = camera.position.clone();
+  initialTarget = controls.target.clone();
+
+  const grid = new THREE.GridHelper(maxDim * 2, Math.floor(maxDim * 2), 0x222222, 0x181818);
+  grid.position.set(center.x, box.min.y - 0.5, center.z);
+  scene.add(grid);
+
+  const uniqueTypes = Object.keys(data.palette).length;
+  document.getElementById('info').textContent =
+    `${data.blocks.length.toLocaleString()} blocks · ${uniqueTypes} types · ${Math.round(bsize.x)}×${Math.round(bsize.y)}×${Math.round(bsize.z)}`;
+
+  let last = performance.now();
+  function animate(now) {
+    requestAnimationFrame(animate);
+    const dt = (now - last) / 1000;
+    last = now;
+    processKeyboard(dt);
+    controls.update();
+    renderer.render(scene, camera);
+  }
+  animate(performance.now());
+}
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+main().catch(err => {
+  document.getElementById('loading').innerHTML =
+    `<div style="color:#888;font-family:var(--mono);font-size:12px">Error: ${err.message}</div>`;
+  console.error(err);
+});
+</script>
+</body>
+</html>

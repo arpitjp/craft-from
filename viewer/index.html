@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Schema Viewer — CraftFrom</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #090b0c;
+  --surface: #111214;
+  --border: #1e2022;
+  --text: #e0e0e0;
+  --text2: #777;
+  --text3: #444;
+  --accent: #4ade80;
+  --mono: 'JetBrains Mono', monospace;
+  --ease: cubic-bezier(.4,0,.2,1);
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);overflow:hidden;font-family:var(--mono);color:var(--text);}
+::selection{background:#fff;color:#000;}
+
+body::before {
+  content:'';position:fixed;inset:0;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.012) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,0.012) 1px,transparent 1px);
+  background-size:16px 16px;pointer-events:none;z-index:0;
+}
+
+#drop-screen {
+  position:fixed;inset:0;z-index:20;
+  display:flex;align-items:center;justify-content:center;
+  transition:opacity 0.3s var(--ease);
+}
+#drop-screen.hidden{opacity:0;pointer-events:none;}
+
+.drop-card {
+  text-align:center;padding:48px 64px;
+  border:1px dashed var(--border);border-radius:12px;
+  background:rgba(14,16,17,0.6);backdrop-filter:blur(20px);
+  max-width:460px;transition:border-color 0.2s;
+}
+.drop-card.dragover{border-color:var(--accent);}
+.drop-card h1{font-size:14px;font-weight:500;letter-spacing:2px;text-transform:uppercase;color:var(--text2);margin-bottom:8px;}
+.drop-card p{font-size:11px;color:var(--text3);margin-bottom:24px;line-height:1.7;}
+.drop-card .formats{font-size:10px;color:var(--text3);margin-top:16px;}
+.drop-card .formats code{font-family:var(--mono);font-size:10px;background:var(--surface);padding:2px 6px;border:1px solid var(--border);color:var(--text2);}
+
+.upload-btn {
+  display:inline-block;padding:10px 28px;
+  font-family:var(--mono);font-size:11px;
+  color:var(--text);background:var(--surface);
+  border:1px solid var(--border);border-radius:6px;
+  cursor:pointer;transition:all 0.2s;
+  text-transform:uppercase;letter-spacing:1px;
+}
+.upload-btn:hover{border-color:var(--accent);color:var(--accent);}
+#file-input{display:none;}
+
+#viewer-wrap {
+  position:fixed;inset:0;z-index:1;
+  display:none;
+}
+#viewer-wrap.active{display:block;}
+
+#loading {
+  position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  color:var(--text2);font-size:12px;text-align:center;z-index:15;display:none;
+}
+.spinner-bar{width:40px;height:2px;background:var(--border);position:relative;overflow:hidden;margin:0 auto 16px;}
+.spinner-bar::after{content:'';position:absolute;left:-50%;width:50%;height:100%;background:#fff;animation:slide .8s ease-in-out infinite;}
+@keyframes slide{0%{left:-50%}100%{left:100%}}
+
+#title-bar {
+  position:fixed;top:16px;right:260px;z-index:10;
+  font-size:10px;color:var(--text3);
+  text-transform:uppercase;letter-spacing:2px;
+}
+</style>
+</head>
+<body>
+
+<div id="drop-screen">
+  <div class="drop-card" id="drop-card">
+    <h1>Schema Viewer</h1>
+    <p>Drop Minecraft schematic files here<br>or click to browse — load multiple at once</p>
+    <label class="upload-btn" for="file-input">Choose files</label>
+    <input type="file" id="file-input" accept=".litematic,.schematic,.schem,.json" multiple>
+    <div class="formats">
+      <code>.litematic</code> <code>.schematic</code> <code>.schem</code> <code>.json</code>
+    </div>
+  </div>
+</div>
+
+<div id="loading"><div class="spinner-bar"></div>Parsing schematics…</div>
+<div id="viewer-wrap"></div>
+<div id="title-bar">schema viewer</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+    "@craftfrom/schema-viewer": "/viewer-lib/index.js"
+  }
+}
+</script>
+
+<script type="module">
+import { SchemaViewer } from "@craftfrom/schema-viewer";
+
+const dropScreen = document.getElementById('drop-screen');
+const dropCard = document.getElementById('drop-card');
+const fileInput = document.getElementById('file-input');
+const loading = document.getElementById('loading');
+const viewerWrap = document.getElementById('viewer-wrap');
+
+let viewer = null;
+
+function ensureViewer() {
+  if (viewer) return;
+  viewerWrap.classList.add('active');
+  viewer = new SchemaViewer({
+    container: viewerWrap,
+    gallery: true,
+    tooltip: true,
+    infoBar: true,
+    dragDrop: true,
+  });
+
+  viewer.on('schematic:remove', () => {
+    if (viewer.getSchematics().length === 0) {
+      viewer.destroy();
+      viewer = null;
+      viewerWrap.classList.remove('active');
+      viewerWrap.innerHTML = '';
+      dropScreen.classList.remove('hidden');
+    }
+  });
+}
+
+async function uploadFiles(fileList) {
+  loading.style.display = 'block';
+
+  const jsonFiles = [];
+  const serverFiles = [];
+
+  for (const file of fileList) {
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (ext === 'json') jsonFiles.push(file);
+    else serverFiles.push(file);
+  }
+
+  ensureViewer();
+
+  for (const file of jsonFiles) {
+    await viewer.loadFromFile(file);
+  }
+
+  if (serverFiles.length > 0) {
+    const form = new FormData();
+    for (const file of serverFiles) form.append('files', file);
+
+    try {
+      const resp = await fetch('/api/upload-multiple', { method: 'POST', body: form });
+      const results = await resp.json();
+      for (const result of results) {
+        if (result.error) continue;
+        const schemResp = await fetch(`/api/schematics/${result.id}`);
+        const data = await schemResp.json();
+        viewer.addSchematic(result.name, { blocks: data.blocks, palette: data.palette }, result.id);
+      }
+    } catch (err) {
+      loading.innerHTML = `<div style="color:#f87171">Error: ${err.message}</div>`;
+      setTimeout(() => { loading.style.display = 'none'; loading.innerHTML = '<div class="spinner-bar"></div>Parsing schematics…'; }, 3000);
+      return;
+    }
+  }
+
+  loading.style.display = 'none';
+  loading.innerHTML = '<div class="spinner-bar"></div>Parsing schematics…';
+  dropScreen.classList.add('hidden');
+}
+
+/* Drop zone events */
+['dragenter', 'dragover'].forEach(e =>
+  dropCard.addEventListener(e, ev => { ev.preventDefault(); dropCard.classList.add('dragover'); })
+);
+['dragleave', 'drop'].forEach(e =>
+  dropCard.addEventListener(e, () => dropCard.classList.remove('dragover'))
+);
+dropCard.addEventListener('drop', e => {
+  e.preventDefault();
+  if (e.dataTransfer?.files?.length) uploadFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files.length) uploadFiles(fileInput.files);
+});
+
+/* Auto-load from server if schematics were pre-loaded */
+(async () => {
+  try {
+    const resp = await fetch('/api/schematics');
+    const list = await resp.json();
+    if (list.length === 0) return;
+
+    loading.style.display = 'block';
+    ensureViewer();
+    dropScreen.classList.add('hidden');
+
+    for (const item of list) {
+      const schemResp = await fetch(`/api/schematics/${item.id}`);
+      const data = await schemResp.json();
+      viewer.addSchematic(item.name, { blocks: data.blocks, palette: data.palette }, item.id);
+    }
+
+    loading.style.display = 'none';
+  } catch (_) {}
+})();
+</script>
+</body>
+</html>
