@@ -10,5 +10,8 @@
   },
   "dependencies": {
     "@craftfrom/schema-viewer": "github:arpitjp/craft-from-schema-viewer"
+  },
+  "devDependencies": {
+    "playwright": "^1.58.2"
   }
 }

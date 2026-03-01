@@ -712,6 +712,7 @@ body {
 
 #viewer-canvas-wrap { flex: 1; position: relative; background: var(--bg); }
 #viewer-canvas-wrap canvas { width: 100%!important; height: 100%!important; display: block; }
+#schema-viewer-container { position: absolute; inset: 0; z-index: 0; }
 
 #hud-toggle {
   position: absolute; top: 10px; left: 10px;
@@ -735,24 +736,6 @@ body {
 }
 #viewer-hud.open { opacity: 1; transform: translateY(0); pointer-events: auto; }
 #viewer-hud .hud-hint { color: var(--text3); opacity: 0.5; margin-top: 4px; font-size: 8px; }
-#block-tooltip {
-  position: absolute; pointer-events: none; z-index: 10;
-  font-family: var(--mono); font-size: 10px;
-  background: rgba(19,21,22,0.95); border: 1px solid var(--border);
-  border-radius: 6px; padding: 6px 10px;
-  color: var(--text2); white-space: nowrap;
-  opacity: 0; transition: opacity 0.12s;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-  transform: translate(12px, -50%);
-}
-#block-tooltip.visible { opacity: 1; }
-#block-tooltip .bt-name { color: var(--white); font-weight: 600; font-size: 11px; }
-#block-tooltip .bt-row { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
-#block-tooltip .bt-swatch {
-  width: 10px; height: 10px; border-radius: 2px;
-  border: 1px solid var(--border); flex-shrink: 0;
-}
-#block-tooltip .bt-pos { color: var(--text3); font-size: 9px; }
 #viewer-hud kbd {
   font-family: var(--mono); font-size: 8px; color: var(--text2);
   background: var(--surface3); padding: 1px 4px;
@@ -1310,7 +1293,7 @@ body {
         <kbd>1-6</kbd> snap &middot; <kbd>0</kbd> reset
         <div class="hud-hint">press <kbd>H</kbd> to toggle</div>
       </div>
-      <div id="block-tooltip"></div>
+      <div id="schema-viewer-container"></div>
     </div>
 
     <div class="side-drawer" id="side-drawer">
@@ -1376,13 +1359,20 @@ body {
 <script type="importmap">
 { "imports": {
     "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+    "@craftfrom/schema-viewer": "/viewer-lib/index.js"
 } }
 </script>
 
 <script type="module">
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+let SchemaViewer;
+try {
+  ({ SchemaViewer } = await import('@craftfrom/schema-viewer'));
+} catch (e) {
+  console.warn('Schema viewer library not available, 3D viewer disabled:', e.message);
+}
 
 /* ═══ Hero 3D: exploding Minecraft voxel world ═══ */
 let heroScene, heroCam, heroRenderer, heroAnimId;
@@ -2296,7 +2286,14 @@ function resetDrawerSteps() {
   const p = document.getElementById('panel-steps'); p.innerHTML='';
   for (let i=1;i<=TOTAL_STEPS;i++) {
     const c = document.createElement('div'); c.className='step-card'; c.id=`scard-${i}`;
-    c.innerHTML=`<div class="step-card-header" onclick="this.parentElement.classList.toggle('expanded')"><span>${i}. ${STAGE_NAMES[i]}</span><span class="scc-status" id="scc-status-${i}">pending</span></div><div class="step-card-body"><div class="preview-grid" id="scard-preview-${i}"></div></div>`;
+    if (i === 7) {
+      c.innerHTML=`<div class="step-card-header" style="cursor:pointer"><span>${i}. ${STAGE_NAMES[i]}</span><span class="scc-status" id="scc-status-${i}">pending</span></div><div class="step-card-body"><div class="preview-grid" id="scard-preview-${i}"></div></div>`;
+      c.querySelector('.step-card-header').addEventListener('click', () => {
+        if (stageStates[7] === 'ready' || stageStates[7] === 'done') openManualRefineTab();
+      });
+    } else {
+      c.innerHTML=`<div class="step-card-header" onclick="this.parentElement.classList.toggle('expanded')"><span>${i}. ${STAGE_NAMES[i]}</span><span class="scc-status" id="scc-status-${i}">pending</span></div><div class="step-card-body"><div class="preview-grid" id="scard-preview-${i}"></div></div>`;
+    }
     p.appendChild(c);
   }
 }
@@ -2543,145 +2540,47 @@ function showViewerResult(result) {
     <span><span class="ts-val">${result.dimensions.join('\u00d7')}</span> size</span>`;
 }
 
-/* ═══ Three.js Viewer ═══ */
-let vScene,vCam,vRenderer,vControls,vAnimId,initPos,initTarget;
-let vRaycaster, vMouse, vBlockLookup, vPaletteData, vHoverMesh, vHoverInstanceId;
-const keys = {};
+/* ═══ 3D Viewer (via @craftfrom/schema-viewer) ═══ */
+let schemaViewer = null;
 
 function destroyViewer() {
-  if (vAnimId) cancelAnimationFrame(vAnimId);
-  if (vRenderer) { vRenderer.dispose(); const c=vRenderer.domElement; if(c.parentElement) c.parentElement.removeChild(c); }
-  vScene=vCam=vRenderer=vControls=vAnimId=null;
-  vBlockLookup=vPaletteData=vHoverMesh=vHoverInstanceId=null;
-  const tt = document.getElementById('block-tooltip');
-  if (tt) tt.classList.remove('visible');
+  if (schemaViewer) {
+    schemaViewer.destroy();
+    schemaViewer = null;
+  }
+  const container = document.getElementById('schema-viewer-container');
+  if (container) container.innerHTML = '';
 }
 
 async function initViewer(jobId) {
   destroyViewer();
-  const wrap = document.getElementById('viewer-canvas-wrap');
-  const w=wrap.clientWidth, h=wrap.clientHeight;
 
-  vScene = new THREE.Scene();
-  vScene.background = new THREE.Color(0x090b0c);
-  vCam = new THREE.PerspectiveCamera(60, w/h, 0.1, 5000);
-  vRenderer = new THREE.WebGLRenderer({antialias:true});
-  vRenderer.setSize(w,h);
-  vRenderer.setPixelRatio(Math.min(devicePixelRatio,2));
-  wrap.appendChild(vRenderer.domElement);
+  if (!SchemaViewer) {
+    console.warn('SchemaViewer not loaded, skipping 3D viewer');
+    hideProgress();
+    return;
+  }
 
-  vControls = new OrbitControls(vCam, vRenderer.domElement);
-  vControls.enableDamping = true;
-  vControls.dampingFactor = 0.08;
-  vControls.rotateSpeed = 0.8;
-  vControls.minDistance = 1;
-  vControls.maxDistance = 5000;
-
-  vScene.add(new THREE.AmbientLight(0xffffff,0.5));
-  const dl = new THREE.DirectionalLight(0xffffff,0.9);
-  dl.position.set(1,2,1.5);
-  vScene.add(dl);
-  vScene.add(new THREE.DirectionalLight(0xffffff,0.2).translateX(-1));
-
-  vRaycaster = new THREE.Raycaster();
-  vMouse = new THREE.Vector2();
+  const container = document.getElementById('schema-viewer-container');
 
   const resp = await fetch(`/api/viewer/${jobId}/blocks.json`);
   if (!resp.ok) { console.warn('Job expired or not found'); hideProgress(); return; }
   const data = await resp.json();
-  if (data.error||!data.blocks?.length) { console.warn(data.error||'No blocks'); hideProgress(); return; }
+  if (data.error || !data.blocks?.length) { console.warn(data.error || 'No blocks'); hideProgress(); return; }
 
-  vPaletteData = data.palette;
-  const { group, lookup } = buildMesh(data);
-  vBlockLookup = lookup;
-  vScene.add(group);
-  const box = new THREE.Box3().setFromObject(group);
-  const center = box.getCenter(new THREE.Vector3());
-  const sz = box.getSize(new THREE.Vector3());
-  const maxD = Math.max(sz.x,sz.y,sz.z);
-
-  vControls.target.copy(center);
-  vCam.position.set(center.x+maxD*.8, center.y+maxD*.5, center.z+maxD*1.2);
-  vCam.lookAt(center); vControls.update();
-  initPos=vCam.position.clone(); initTarget=vControls.target.clone();
-
-  const grid = new THREE.GridHelper(maxD*2, Math.floor(maxD*2), 0x252829, 0x1a1d1f);
-  grid.position.set(center.x, box.min.y-.5, center.z);
-  vScene.add(grid);
-
-  hideProgress();
-
-  let last=performance.now();
-  (function animate(now) {
-    vAnimId=requestAnimationFrame(animate);
-    processKeys((now-last)/1000); last=now;
-    vControls.update(); vRenderer.render(vScene,vCam);
-  })(performance.now());
-
-  new ResizeObserver(()=>{
-    const cw=wrap.clientWidth,ch=wrap.clientHeight;
-    if(cw&&ch&&vCam){vCam.aspect=cw/ch;vCam.updateProjectionMatrix();vRenderer.setSize(cw,ch);}
-  }).observe(wrap);
-
-  const tooltip = document.getElementById('block-tooltip');
-  wrap.addEventListener('mousemove', (e) => {
-    if (!vRaycaster||!vCam||!vScene) return;
-    const rect = wrap.getBoundingClientRect();
-    vMouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-    vMouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-
-    vRaycaster.setFromCamera(vMouse, vCam);
-    const hits = vRaycaster.intersectObjects(vScene.children, true);
-
-    let found = false;
-    for (const hit of hits) {
-      if (hit.object.isInstancedMesh && hit.instanceId != null && vBlockLookup) {
-        const key = `${hit.object.uuid}_${hit.instanceId}`;
-        const info = vBlockLookup.get(key);
-        if (info) {
-          const rgb = vPaletteData[info.bid] || [128,128,128];
-          const name = info.bid.replace('minecraft:','');
-          tooltip.innerHTML = `<div class="bt-name">${name}</div><div class="bt-row"><div class="bt-swatch" style="background:rgb(${rgb.join(',')})"></div><span class="bt-pos">${info.x}, ${info.y}, ${info.z}</span></div>`;
-          tooltip.style.left = (e.clientX - rect.left) + 'px';
-          tooltip.style.top = (e.clientY - rect.top) + 'px';
-          tooltip.classList.add('visible');
-          found = true;
-          break;
-        }
-      }
-    }
-    if (!found) tooltip.classList.remove('visible');
+  schemaViewer = new SchemaViewer({
+    container,
+    background: '#090b0c',
+    gallery: false,
+    tooltip: true,
+    infoBar: false,
+    dragDrop: false,
   });
-  wrap.addEventListener('mouseleave', () => tooltip.classList.remove('visible'));
+
+  schemaViewer.addSchematic('result', data);
+  hideProgress();
 }
 
-function buildMesh(data) {
-  const cg={}; for(const[x,y,z,bid]of data.blocks){if(!cg[bid])cg[bid]=[];cg[bid].push(x,y,z);}
-  const group=new THREE.Group(), geo=new THREE.BoxGeometry(1,1,1);
-  const lookup = new Map();
-  for(const[bid,coords]of Object.entries(cg)){
-    const rgb=data.palette[bid]||[128,128,128];
-    const mat=new THREE.MeshLambertMaterial({color:new THREE.Color(rgb[0]/255,rgb[1]/255,rgb[2]/255)});
-    const cnt=coords.length/3, mesh=new THREE.InstancedMesh(geo,mat,cnt), d=new THREE.Object3D();
-    for(let i=0;i<cnt;i++){
-      const bx=coords[i*3], by=coords[i*3+1], bz=coords[i*3+2];
-      d.position.set(bx,by,bz); d.updateMatrix(); mesh.setMatrixAt(i,d.matrix);
-      lookup.set(`${mesh.uuid}_${i}`, {bid, x:bx, y:by, z:bz});
-    }
-    mesh.instanceMatrix.needsUpdate=true; group.add(mesh);
-  }
-  return { group, lookup };
-}
-
-function isTyping() {
-  const t = document.activeElement?.tagName;
-  return t === 'INPUT' || t === 'TEXTAREA' || document.activeElement?.isContentEditable;
-}
-function isViewerFocused() {
-  const wrap = document.getElementById('viewer-canvas-wrap');
-  return wrap && (wrap.contains(document.activeElement) || document.activeElement === document.body);
-}
-const VIEWER_KEYS = new Set(['w','a','s','d','q','e','r','f','arrowup','arrowdown','arrowleft','arrowright','0','1','2','3','4','5','6',' ']);
 function toggleHud() {
   const hud = document.getElementById('viewer-hud');
   const btn = document.getElementById('hud-toggle');
@@ -2689,70 +2588,9 @@ function toggleHud() {
   btn.classList.toggle('active', open);
 }
 document.getElementById('hud-toggle').addEventListener('click', toggleHud);
-
-addEventListener('keydown', e=>{
-  if (isTyping()) return;
-  const k = e.key.toLowerCase();
-  if (k === 'h' && isViewerFocused()) { toggleHud(); return; }
-  if (!VIEWER_KEYS.has(k)) return;
-  if (!isViewerFocused()) return;
-  keys[k] = true;
-  if (k === ' ') e.preventDefault();
+addEventListener('keydown', e => {
+  if (e.key.toLowerCase() === 'h' && !['INPUT','TEXTAREA'].includes(document.activeElement?.tagName)) toggleHud();
 });
-addEventListener('keyup', e=>{ keys[e.key.toLowerCase()] = false; });
-addEventListener('blur', ()=>{ for(const k in keys) keys[k]=false; });
-document.addEventListener('visibilitychange', ()=>{ if(document.hidden) for(const k in keys) keys[k]=false; });
-
-function processKeys(dt) {
-  if (!vCam||!vControls) return;
-  const sp=40*dt, rot=1.5*dt;
-
-  const camDir = new THREE.Vector3(); vCam.getWorldDirection(camDir);
-  const worldUp = new THREE.Vector3(0,1,0);
-
-  const camRight = new THREE.Vector3().setFromMatrixColumn(vCam.matrixWorld, 0).normalize();
-  const camUp = new THREE.Vector3().crossVectors(camRight, camDir).normalize();
-
-  let hFwd = camDir.clone(); hFwd.y=0;
-  if (hFwd.lengthSq() < 0.001) {
-    hFwd.set(-vCam.matrixWorld.elements[8], 0, -vCam.matrixWorld.elements[10]).normalize();
-    if (hFwd.lengthSq() < 0.001) hFwd.set(0, 0, -1);
-  }
-  hFwd.normalize();
-  const hRight = new THREE.Vector3().crossVectors(hFwd, worldUp).normalize();
-
-  if(keys['w']){vControls.target.addScaledVector(hFwd,sp);vCam.position.addScaledVector(hFwd,sp);}
-  if(keys['s']){vControls.target.addScaledVector(hFwd,-sp);vCam.position.addScaledVector(hFwd,-sp);}
-  if(keys['a']){vControls.target.addScaledVector(hRight,-sp);vCam.position.addScaledVector(hRight,-sp);}
-  if(keys['d']){vControls.target.addScaledVector(hRight,sp);vCam.position.addScaledVector(hRight,sp);}
-  if(keys['arrowup']){vControls.target.addScaledVector(camDir,sp);vCam.position.addScaledVector(camDir,sp);}
-  if(keys['arrowdown']){vControls.target.addScaledVector(camDir,-sp);vCam.position.addScaledVector(camDir,-sp);}
-  if(keys['arrowleft']){vControls.target.addScaledVector(camRight,-sp);vCam.position.addScaledVector(camRight,-sp);}
-  if(keys['arrowright']){vControls.target.addScaledVector(camRight,sp);vCam.position.addScaledVector(camRight,sp);}
-  if(keys[' ']){vCam.position.y+=sp;vControls.target.y+=sp;}
-  if(keys['q'])vControls.autoRotateSpeed=-30;else if(keys['e'])vControls.autoRotateSpeed=30;else vControls.autoRotateSpeed=0;
-  vControls.autoRotate=keys['q']||keys['e'];
-  if(keys['r']){const o=vCam.position.clone().sub(vControls.target);o.applyAxisAngle(camRight,-rot);vCam.position.copy(vControls.target).add(o);}
-  if(keys['f']){const o=vCam.position.clone().sub(vControls.target);o.applyAxisAngle(camRight,rot);vCam.position.copy(vControls.target).add(o);}
-
-  const dist = vCam.position.distanceTo(vControls.target);
-  const snapViews = {
-    '1': ()=> camDir.clone().negate(),
-    '2': ()=> camDir.clone(),
-    '3': ()=> camRight.clone().negate(),
-    '4': ()=> camRight.clone(),
-    '5': ()=> new THREE.Vector3(0,1,0),
-    '6': ()=> new THREE.Vector3(0,-1,0),
-  };
-  for(const[k,dirFn] of Object.entries(snapViews)){
-    if(keys[k]){
-      const c=vControls.target.clone(), d=dirFn().normalize();
-      vCam.position.copy(c).addScaledVector(d, dist);
-      vCam.lookAt(c); vControls.update(); keys[k]=false;
-    }
-  }
-  if(keys['0']&&initPos){vCam.position.copy(initPos);vControls.target.copy(initTarget);vControls.update();keys['0']=false;}
-}
 
 /* ═══ Floating particles ═══ */
 (function(){

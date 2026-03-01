@@ -1,0 +1,3 @@
+[submodule "viewer/schema-viewer"]
+	path = viewer/schema-viewer
+	url = https://github.com/arpitjp/craft-from-schema-viewer.git

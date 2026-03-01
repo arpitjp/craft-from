@@ -39,7 +39,14 @@ JOBS_DIR.mkdir(exist_ok=True)
 app = FastAPI(title="CraftFrom")
 
 WEB_DIR = Path(__file__).parent
+PROJECT_ROOT = WEB_DIR.parent
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
+
+VIEWER_LIB_DIST = PROJECT_ROOT / "viewer" / "schema-viewer" / "dist"
+if not VIEWER_LIB_DIST.is_dir():
+    VIEWER_LIB_DIST = PROJECT_ROOT / "node_modules" / "@craftfrom" / "schema-viewer" / "dist"
+if VIEWER_LIB_DIST.is_dir():
+    app.mount("/viewer-lib", StaticFiles(directory=str(VIEWER_LIB_DIST)), name="viewer-lib")
 
 _jobs: dict[str, dict] = {}
 
