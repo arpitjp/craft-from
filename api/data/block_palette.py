@@ -63,7 +63,6 @@ DEFAULT_PALETTE = [
     {"id": "minecraft:purple_terracotta", "color": [118, 70, 86], "tags": ["clay", "purple"]},
     {"id": "minecraft:magenta_terracotta", "color": [149, 88, 109], "tags": ["clay", "magenta"]},
     {"id": "minecraft:purple_concrete", "color": [100, 32, 156], "tags": ["concrete", "purple"]},
-    {"id": "minecraft:purple_wool", "color": [122, 42, 173], "tags": ["soft", "purple"]},
     {"id": "minecraft:purple_concrete_powder", "color": [131, 55, 177], "tags": ["powder", "purple"]},
     {"id": "minecraft:magenta_wool", "color": [189, 68, 179], "tags": ["soft", "magenta"]},
     {"id": "minecraft:magenta_concrete", "color": [169, 48, 159], "tags": ["concrete", "magenta"]},
@@ -76,7 +75,6 @@ DEFAULT_PALETTE = [
     {"id": "minecraft:light_blue_concrete", "color": [36, 137, 199], "tags": ["concrete", "blue"]},
     {"id": "minecraft:blue_concrete", "color": [45, 47, 143], "tags": ["concrete", "blue"]},
     {"id": "minecraft:blue_ice", "color": [116, 167, 253], "tags": ["ice", "blue"]},
-    {"id": "minecraft:blue_wool", "color": [53, 57, 157], "tags": ["soft", "blue"]},
     # Creams / warm whites
     {"id": "minecraft:smooth_sandstone", "color": [223, 214, 170], "tags": ["sand", "cream"]},
     {"id": "minecraft:end_stone", "color": [219, 223, 158], "tags": ["stone", "cream"]},
@@ -103,6 +101,52 @@ DEFAULT_PALETTE = [
     {"id": "minecraft:red_mushroom_block", "color": [200, 47, 45], "tags": ["natural", "red"]},
     {"id": "minecraft:packed_mud", "color": [142, 106, 79], "tags": ["natural", "brown"]},
     {"id": "minecraft:mud_bricks", "color": [137, 104, 75], "tags": ["brick", "brown"]},
+    # Greens
+    {"id": "minecraft:lime_wool", "color": [112, 185, 26], "tags": ["soft", "green", "light"]},
+    {"id": "minecraft:lime_concrete", "color": [94, 169, 25], "tags": ["concrete", "green"]},
+    {"id": "minecraft:green_concrete", "color": [73, 91, 36], "tags": ["concrete", "green", "dark"]},
+    {"id": "minecraft:green_terracotta", "color": [76, 83, 42], "tags": ["clay", "green", "dark"]},
+    {"id": "minecraft:lime_terracotta", "color": [103, 118, 53], "tags": ["clay", "green"]},
+    {"id": "minecraft:moss_block", "color": [89, 109, 45], "tags": ["natural", "green"]},
+    # Yellows / oranges
+    {"id": "minecraft:yellow_terracotta", "color": [186, 133, 35], "tags": ["clay", "yellow"]},
+    {"id": "minecraft:yellow_concrete", "color": [241, 175, 21], "tags": ["concrete", "yellow"]},
+    {"id": "minecraft:orange_terracotta", "color": [162, 84, 38], "tags": ["clay", "orange"]},
+    {"id": "minecraft:orange_concrete", "color": [224, 97, 1], "tags": ["concrete", "orange"]},
+    # Reds / pinks
+    {"id": "minecraft:red_concrete", "color": [142, 33, 33], "tags": ["concrete", "red"]},
+    {"id": "minecraft:magenta_concrete_powder", "color": [192, 83, 184], "tags": ["powder", "magenta"]},
+    {"id": "minecraft:pink_wool", "color": [238, 141, 172], "tags": ["soft", "pink"]},
+    # Light browns / beiges (critical for character models)
+    {"id": "minecraft:stripped_dark_oak_log", "color": [96, 76, 49], "tags": ["wood", "brown", "dark"]},
+    {"id": "minecraft:jungle_planks", "color": [160, 115, 81], "tags": ["wood", "brown", "warm"]},
+    {"id": "minecraft:stripped_jungle_log", "color": [171, 132, 84], "tags": ["wood", "brown", "warm"]},
+    {"id": "minecraft:acacia_planks", "color": [169, 92, 51], "tags": ["wood", "orange", "warm"]},
+    {"id": "minecraft:stripped_acacia_log", "color": [174, 92, 59], "tags": ["wood", "orange"]},
+    {"id": "minecraft:acacia_log", "color": [103, 97, 87], "tags": ["wood", "gray", "log"]},
+    {"id": "minecraft:barrel", "color": [134, 104, 61], "tags": ["wood", "brown", "warm"]},
+    {"id": "minecraft:brown_concrete", "color": [96, 60, 32], "tags": ["concrete", "brown"]},
+    {"id": "minecraft:brown_concrete_powder", "color": [126, 85, 54], "tags": ["powder", "brown"]},
+    # Tans / skin tones (common in character models)
+    {"id": "minecraft:smooth_red_sandstone", "color": [181, 97, 31], "tags": ["sand", "orange"]},
+    {"id": "minecraft:cut_sandstone", "color": [218, 206, 160], "tags": ["sand", "beige"]},
+    {"id": "minecraft:raw_gold_block", "color": [221, 169, 47], "tags": ["metal", "gold"]},
+    {"id": "minecraft:honeycomb_block", "color": [229, 148, 29], "tags": ["natural", "orange"]},
+    # Dark grays (better coverage)
+    {"id": "minecraft:polished_deepslate", "color": [72, 72, 73], "tags": ["stone", "dark"]},
+    {"id": "minecraft:deepslate_bricks", "color": [70, 70, 71], "tags": ["stone", "dark", "brick"]},
+    {"id": "minecraft:tuff", "color": [108, 109, 102], "tags": ["stone", "gray"]},
+    {"id": "minecraft:polished_andesite", "color": [132, 135, 133], "tags": ["stone", "gray"]},
+    # Additional terracotta shades
+    {"id": "minecraft:light_gray_terracotta", "color": [135, 107, 98], "tags": ["clay", "gray"]},
+    {"id": "minecraft:gray_terracotta", "color": [57, 42, 36], "tags": ["clay", "gray", "dark"]},
+    {"id": "minecraft:black_terracotta", "color": [37, 23, 16], "tags": ["clay", "black"]},
+    {"id": "minecraft:terracotta", "color": [152, 94, 68], "tags": ["clay", "orange", "natural"]},
+    # Concrete extras
+    {"id": "minecraft:black_concrete", "color": [8, 10, 15], "tags": ["concrete", "black"]},
+    {"id": "minecraft:light_blue_concrete_powder", "color": [74, 180, 213], "tags": ["powder", "blue"]},
+    {"id": "minecraft:cyan_concrete_powder", "color": [36, 147, 157], "tags": ["powder", "cyan"]},
+    {"id": "minecraft:white_glazed_terracotta", "color": [188, 212, 202], "tags": ["clay", "white"]},
 ]
 
 

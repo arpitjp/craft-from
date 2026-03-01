@@ -51,6 +51,47 @@ if VIEWER_LIB_DIST.is_dir():
 _jobs: dict[str, dict] = {}
 
 
+def _resolve_output_dir(job_id: str) -> Path:
+    """Return the output dir for a job, whether it's in-memory or only on disk."""
+    if job_id in _jobs:
+        return _jobs[job_id]["output_dir"]
+    return JOBS_DIR / job_id / "output"
+
+
+def _load_block_grid(job_id: str):
+    """Reconstruct a BlockGrid from in-memory job data or blocks.json on disk."""
+    from api.core.types import BlockGrid, BlockMapping
+
+    if job_id in _jobs and _jobs[job_id].get("_blocks"):
+        return _jobs[job_id]["_blocks"]
+
+    output_dir = _resolve_output_dir(job_id)
+    blocks_json = output_dir / "viewer" / "blocks.json"
+    if not blocks_json.exists():
+        return None
+
+    try:
+        data = json.loads(blocks_json.read_text())
+        blocks_raw = data.get("blocks", [])
+        if not blocks_raw:
+            return None
+        blocks = [
+            BlockMapping(
+                block_id=b[3],
+                position=(b[0], b[1], b[2]),
+                reason="restored",
+            )
+            for b in blocks_raw
+        ]
+        xs = [b[0] for b in blocks_raw]
+        ys = [b[1] for b in blocks_raw]
+        zs = [b[2] for b in blocks_raw]
+        dims = (max(xs) + 1, max(ys) + 1, max(zs) + 1)
+        return BlockGrid(blocks=blocks, dimensions=dims)
+    except Exception:
+        return None
+
+
 def _save_upload(upload: UploadFile, dest: Path):
     with open(dest, "wb") as f:
         shutil.copyfileobj(upload.file, f)
@@ -68,24 +109,35 @@ def _run_pipeline_stages(job_id: str, mesh_path: Path, image_path: Optional[Path
     try:
         config.image_to_3d_provider = "file"
 
+        stage_info = job.setdefault("stage_info", {})
+
         job["stage"] = 1
         job["stage_name"] = "Loading mesh"
         image = ImageInput(path=mesh_path)
         mesh = image_to_3d(image, config)
         ref_str = str(image_path) if image_path else None
         save_stage1_output(mesh, ref_str, config.output_dir)
+        stage_info[1] = {"format": mesh.format, "vertices": mesh.vertex_count}
         job["stages_done"].append(1)
 
         job["stage"] = 2
         job["stage_name"] = "Voxelizing"
         voxels = voxelize(mesh, config, reference_image=ref_str)
         save_stage2_output(voxels, config.output_dir)
+        stage_info[2] = {
+            "resolution": list(voxels.resolution),
+            "voxels": voxels.occupied_count,
+        }
         job["stages_done"].append(2)
 
         job["stage"] = 3
         job["stage_name"] = "Mapping blocks"
         blocks = map_blocks(voxels, config)
         save_stage3_output(blocks, voxels, config.output_dir)
+        stage_info[3] = {
+            "blocks": blocks.block_count,
+            "unique_types": len(set(b.block_id for b in blocks.blocks)),
+        }
         job["stages_done"].append(3)
 
         job["_blocks"] = blocks
@@ -115,6 +167,11 @@ def _run_pipeline_stages(job_id: str, mesh_path: Path, image_path: Optional[Path
         job["stage_name"] = "Exporting schematic"
         result = export_schematic(blocks, config)
         save_stage4_output(result.path, result.block_count, result.dimensions, config.output_dir)
+        stage_info[5] = {
+            "blocks": result.block_count,
+            "dimensions": list(result.dimensions),
+            "format": result.format,
+        }
         job["stages_done"].append(5)
 
         job["stage"] = 6
@@ -125,6 +182,7 @@ def _run_pipeline_stages(job_id: str, mesh_path: Path, image_path: Optional[Path
         if voxel_front.exists() and viewer_front.exists():
             compare_views(str(voxel_front), str(viewer_front),
                           str(config.output_dir / "5_viewer" / "comparison_front.png"))
+        stage_info[6] = {"views": 5}
         job["stages_done"].append(6)
 
         _generate_viewer_json(result.path, output_dir)
@@ -362,7 +420,14 @@ async def run_job(job_id: str):
                 break
 
             if current == "done":
-                data = {"stage": "done", "result": job["result"]}
+                data = {
+                    "stage": "done",
+                    "result": job["result"],
+                    "stage_info": {
+                        str(k): v
+                        for k, v in job.get("stage_info", {}).items()
+                    },
+                }
                 if job.get("llm_info"):
                     data["llm_info"] = job["llm_info"]
                 if job.get("llm_skipped"):
@@ -375,6 +440,10 @@ async def run_job(job_id: str):
                     "stage": current,
                     "name": stage_names.get(current, ""),
                     "done": job["stages_done"],
+                    "stage_info": {
+                        str(k): v
+                        for k, v in job.get("stage_info", {}).items()
+                    },
                 }
                 if current == 4 and job.get("llm_info"):
                     evt["llm_info"] = job["llm_info"]
@@ -390,33 +459,97 @@ async def run_job(job_id: str):
 
 @app.get("/api/preview/{job_id}/{stage}/{filename}")
 async def get_preview(job_id: str, stage: str, filename: str):
-    if job_id not in _jobs:
-        return {"error": "Job not found"}
-    path = _jobs[job_id]["output_dir"] / stage / filename
+    path = _resolve_output_dir(job_id) / stage / filename
     if not path.exists():
         return {"error": "File not found"}
     return FileResponse(path)
 
 
 @app.get("/api/download/{job_id}")
-async def download_litematic(job_id: str):
-    if job_id not in _jobs:
-        return {"error": "Job not found"}
-    path = _jobs[job_id]["output_dir"] / "output.litematic"
-    if not path.exists():
-        return {"error": "File not generated yet"}
-    return FileResponse(path, filename="output.litematic",
-                        media_type="application/octet-stream")
+async def download_schematic(
+    job_id: str,
+    format: str = "litematic",
+    colorless: bool = False,
+):
+    from api.stages.schema_export import export_format, SUPPORTED_FORMATS
+
+    if format not in SUPPORTED_FORMATS:
+        return {"error": f"Unsupported format. Supported: {SUPPORTED_FORMATS}"}
+
+    output_dir = _resolve_output_dir(job_id)
+    suffix = f".{format}" if format != "litematic" else ".litematic"
+
+    if colorless:
+        cache_name = f"output_colorless{suffix}"
+    else:
+        cache_name = f"output{suffix}"
+
+    cached = output_dir / cache_name
+    if cached.exists():
+        return FileResponse(
+            cached, filename=cache_name,
+            media_type="application/octet-stream",
+        )
+
+    blocks_json = output_dir / "viewer" / "blocks.json"
+    if not blocks_json.exists():
+        return {"error": "Job data not found"}
+
+    block_grid = _load_block_grid(job_id)
+    if block_grid is None:
+        return {"error": "Could not reconstruct block data"}
+
+    try:
+        path = export_format(block_grid, output_dir, format, colorless=colorless)
+        if colorless and path.name != cache_name:
+            dest = output_dir / cache_name
+            shutil.copy2(path, dest)
+            path = dest
+    except Exception as e:
+        return {"error": str(e)}
+
+    return FileResponse(
+        path, filename=cache_name,
+        media_type="application/octet-stream",
+    )
 
 
 @app.get("/api/viewer/{job_id}/blocks.json")
 async def viewer_blocks(job_id: str):
-    if job_id not in _jobs:
-        return {"error": "Job not found"}
-    path = _jobs[job_id]["output_dir"] / "viewer" / "blocks.json"
+    path = _resolve_output_dir(job_id) / "viewer" / "blocks.json"
     if not path.exists():
         return {"error": "Viewer data not ready"}
     return FileResponse(path, media_type="application/json")
+
+
+@app.get("/api/job/{job_id}")
+async def get_job_info(job_id: str):
+    """Check if a job exists (in-memory or on disk) and return its metadata."""
+    if job_id in _jobs and _jobs[job_id].get("result"):
+        return {"exists": True, "result": _jobs[job_id]["result"]}
+
+    output_dir = JOBS_DIR / job_id / "output"
+    blocks_json = output_dir / "viewer" / "blocks.json"
+    litematic = output_dir / "output.litematic"
+    if not blocks_json.exists():
+        return {"exists": False}
+
+    result = {}
+    try:
+        data = json.loads(blocks_json.read_text())
+        blocks = data.get("blocks", [])
+        if blocks:
+            xs = [b[0] for b in blocks]
+            ys = [b[1] for b in blocks]
+            zs = [b[2] for b in blocks]
+            dims = [max(xs) - min(xs) + 1, max(ys) - min(ys) + 1, max(zs) - min(zs) + 1]
+        else:
+            dims = [0, 0, 0]
+        result = {"block_count": len(blocks), "dimensions": dims}
+    except Exception:
+        result = {"block_count": 0, "dimensions": [0, 0, 0]}
+
+    return {"exists": True, "result": result}
 
 
 @app.get("/api/prompt/{job_id}")

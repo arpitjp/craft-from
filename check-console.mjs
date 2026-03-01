@@ -17,10 +17,10 @@ try {
     logs.push(entry);
   });
 
-  await page.goto('http://127.0.0.1:8000', { waitUntil: 'networkidle', timeout: 15000 });
-  await page.waitForTimeout(3000);
+  await page.goto('http://localhost:8766', { waitUntil: 'networkidle', timeout: 15000 });
+  await page.waitForTimeout(5000);
 
-  await page.screenshot({ path: '/Users/arpit.jain/p/craft-from/screenshot.png', fullPage: false });
+  await page.screenshot({ path: '/Users/arpit.jain/p/craft-from/screenshot-8766.png', fullPage: false });
   await browser.close();
 
   console.log('=== ALL CONSOLE MESSAGES ===\n');

@@ -612,9 +612,11 @@ def _compute_adjacency(regions: list[dict]) -> None:
 
 
 def _build_prompt(regions: list[dict], description: Optional[str]) -> str:
+    palette_by_id: dict[str, list[int]] = {}
     palette_lines = []
     for entry in DEFAULT_PALETTE:
         bid = entry["id"].replace("minecraft:", "")
+        palette_by_id[entry["id"]] = entry["color"]
         palette_lines.append(
             f"  {bid}: rgb({entry['color'][0]},{entry['color'][1]},{entry['color'][2]}) [{', '.join(entry['tags'])}]"
         )
@@ -627,7 +629,13 @@ def _build_prompt(regions: list[dict], description: Optional[str]) -> str:
             for b in r["current_blocks"]
         ) if r["current_blocks"] else "unknown"
         dominant = r["current_blocks"][0]["id"].replace("minecraft:", "") if r["current_blocks"] else "unknown"
+        dominant_full = r["current_blocks"][0]["id"] if r["current_blocks"] else ""
         neighbors_str = ", ".join(r["neighbors"][:5]) if r["neighbors"] else "none"
+
+        # Show the assigned block's actual RGB so the LLM can see the color gap
+        block_rgb = palette_by_id.get(dominant_full, r["avg_rgb"])
+        orig = r["avg_rgb"]
+        color_gap = round(sum((a - b) ** 2 for a, b in zip(orig, block_rgb)) ** 0.5, 1)
 
         defects_parts = []
         struct = r.get("structure", {})
@@ -642,8 +650,10 @@ def _build_prompt(regions: list[dict], description: Optional[str]) -> str:
         region_lines.append(
             f"  {r['id']}: {r['count']} blocks, role={r['structural_role']}, "
             f"size={r['bbox_size'][0]}x{r['bbox_size'][1]}x{r['bbox_size'][2]}, "
-            f"color=rgb({r['avg_rgb'][0]},{r['avg_rgb'][1]},{r['avg_rgb'][2]}), "
-            f"current={dominant}, mix=[{blocks_str}], "
+            f"target_color=rgb({orig[0]},{orig[1]},{orig[2]}), "
+            f"assigned={dominant} rgb({block_rgb[0]},{block_rgb[1]},{block_rgb[2]}), "
+            f"color_gap={color_gap}, "
+            f"mix=[{blocks_str}], "
             f"adj=[{neighbors_str}]{defects_str}"
         )
     regions_text = "\n".join(region_lines)
@@ -661,55 +671,58 @@ If images are attached, use them to understand what this structure looks like:
 Use these to make better material choices that match the original look.
 """
 
-    return f"""You are an expert Minecraft builder. I'm converting a 3D model into a Minecraft structure and need you to choose the best block materials for each section.
+    return f"""You are an expert Minecraft builder. I'm converting a 3D model into a Minecraft structure and need you to fix the block color assignments so the build looks like the original object.
 
-The structure has been auto-segmented into regions (walls, roofs, pillars, etc.) and each region has been color-matched to a Minecraft block. The colors are correct, but the material choices are generic. Your job: upgrade the materials to be architecturally appropriate.
+The auto-mapper picked blocks by nearest RGB distance, but many regions ended up with the WRONG COLOR. Each region below shows:
+- **target_color**: the original 3D model's average color for this area (what it SHOULD look like)
+- **assigned**: the Minecraft block that was auto-picked, and its actual RGB
+- **color_gap**: Euclidean RGB distance between target and assigned (higher = worse match)
+
+Your job: for regions where the color_gap is high or the assigned block looks wrong, pick a better block from the palette that is CLOSER to the target_color.
 {context}{image_note}
-## Available Minecraft blocks
+## Available Minecraft blocks (with their RGB values)
 {palette_text}
 
 ## Structure regions
-Each region is a contiguous section of the build. Fields: block count, structural role, physical size, average RGB color, current block assignment, block mix before smoothing, and adjacent regions.
-
 {regions_text}
 
 ## What to do
-For each region, you can do TWO things:
 
-### 1. Block upgrades (material choice) — PRIMARY TASK
-Upgrade the auto-matched block to something architecturally appropriate:
-- **Foundations/floors** → stone_bricks, deepslate, cobblestone
-- **Walls** → planks, bricks, terracotta, stone_bricks. Adjacent walls should use DIFFERENT materials for visual contrast
-- **Roofs/overhangs** → dark blocks: dark_oak_planks, spruce_planks, deepslate
-- **Pillars/columns** → logs (oak_log, spruce_log) or quartz_block to contrast walls
-- **Spires** → stone_bricks, quartz_block, or logs
-- **Detail/trim** → accent blocks that contrast surroundings
+### 1. Fix bad color matches — PRIMARY TASK
+For each region with a high color_gap or wrong-looking block:
+- Compare target_color to the palette and pick the block whose RGB is closest
+- Prioritize HUE accuracy (don't assign blue when the target is brown)
+- Then match LIGHTNESS (dark target → dark block, light target → light block)
+- Regions with color_gap < 30 are usually fine — skip them unless the hue is clearly wrong
+- Regions with color_gap > 50 almost certainly need fixing
 
-### 2. Structure fixes (voxel geometry) — USE SPARINGLY
+### 2. Architectural polish — SECONDARY
+After fixing colors, consider:
+- Foundations → stone_bricks, cobblestone, deepslate
+- Adjacent regions should use different blocks for visual contrast
+- Walls benefit from planks, bricks, or terracotta rather than raw stone
+
+### 3. Structure fixes — USE SPARINGLY
 Regions with `defects` can be fixed using structural operations:
-- **fill_holes** — plug small gaps in walls/surfaces (ONLY when holes > 20)
-- **smooth_surface** — remove stray 1-block bumps (ONLY when bumps > 30)
-- **remove_floating** — delete disconnected fragments (ONLY when floating > 10)
-
-**CRITICAL**: Do NOT apply structural ops to every region! Only use them on regions with LARGE defect counts. Small defect counts are normal voxel geometry (edges, details, overhangs). Applying smooth_surface everywhere destroys eaves, trim, and architectural details. When in doubt, SKIP structural ops.
+- **fill_holes** — ONLY when holes > 20
+- **smooth_surface** — ONLY when bumps > 30
+- **remove_floating** — ONLY when floating > 10
+Do NOT apply structural ops unless defect counts are listed and high.
 
 ## Rules
-- ONE block per region. Stay in a similar LIGHTNESS (don't turn dark→bright or bright→dark).
-- Hue shifts are OK — brown stone → brown planks, gray stone → gray stone_bricks.
-- Focus on material upgrades: cobblestone→stone_bricks, stone→andesite, oak_planks→spruce_planks for dark areas.
-- Adjacent regions (adj field) SHOULD use different blocks when possible.
-- Only include regions you want to CHANGE. Omit regions that are fine as-is.
-- Fewer, higher-confidence changes are better than changing everything.
-- Most regions only need a block upgrade, NOT structural ops.
+- ONE block per region. Pick the block from the palette whose RGB is closest to target_color.
+- Hue accuracy is the TOP priority. A brown target should get a brown block, not gray.
+- Lightness shifts of ±40 are OK; larger shifts need strong justification.
+- Only include regions you want to CHANGE. Skip regions that already match well.
+- Change MORE regions rather than fewer — fix every bad color match you can find.
 
 ## Response format
 Return ONLY a JSON object. Each key is a region ID. The value can be:
 - A string (block change only): `"minecraft:stone_bricks"`
-- An object (block change + structure fix or structure fix only):
-  `{{"block": "minecraft:stone_bricks", "ops": ["fill_holes", "smooth_surface"]}}`
-  `{{"ops": ["remove_floating"]}}` (no block change, just fix structure)
+- An object (block change + structure fix):
+  `{{"block": "minecraft:stone_bricks", "ops": ["fill_holes"]}}`
 
-Example (note: most regions are block-only, ops are rare):
+Example:
 {{"r0": "minecraft:stone_bricks", "r2": "minecraft:spruce_planks", "r5": "minecraft:dark_oak_planks", "r8": {{"block": "minecraft:cobblestone", "ops": ["fill_holes"]}}}}
 
 No explanation, no markdown fences, just the JSON."""

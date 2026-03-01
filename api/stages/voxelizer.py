@@ -1,6 +1,11 @@
 """Stage 2: 3D Mesh → Voxel Grid.
 
-Converts a triangle mesh into a filled voxel grid with per-voxel RGBA colors.
+Converts a triangle mesh into a voxel grid with per-voxel RGBA colors.
+
+The voxelizer respects the mesh topology:
+- Hollow/shell meshes produce hollow voxel shells
+- Solid/watertight meshes produce filled voxel volumes
+- Surface gaps are sealed with conservative morphological closing
 
 Coordinate convention:
   Mesh:      X=width, Y=height(up), Z=depth
@@ -51,16 +56,27 @@ def run(
 
     pitch = mesh.extents.max() / resolution
     voxel_obj = mesh.voxelized(pitch=pitch)
-    voxel_obj = voxel_obj.fill()
 
-    raw_matrix = voxel_obj.matrix.copy()
-    closed = _close_gaps(raw_matrix)
-    if closed is not raw_matrix:
-        voxel_obj = trimesh.voxel.VoxelGrid(
-            trimesh.voxel.encoding.DenseEncoding(closed),
-            transform=voxel_obj.transform,
-        )
-        log.info(f"Gap fill: {int(raw_matrix.sum())} → {int(closed.sum())} voxels")
+    is_hollow = _detect_hollow(mesh, voxel_obj)
+
+    if is_hollow:
+        log.info("Hollow mesh detected — preserving shell structure")
+        matrix = _build_shell(voxel_obj.matrix.copy(), mesh, voxel_obj, pitch)
+    else:
+        log.info("Solid mesh — filling interior")
+        voxel_obj = voxel_obj.fill()
+        matrix = voxel_obj.matrix.copy()
+
+    sealed = _seal_surface_gaps(matrix)
+    if sealed is not matrix:
+        gained = int(sealed.sum() - matrix.sum())
+        log.info(f"Surface gap seal: +{gained} voxels")
+        matrix = sealed
+
+    voxel_obj = trimesh.voxel.VoxelGrid(
+        trimesh.voxel.encoding.DenseEncoding(matrix),
+        transform=voxel_obj.transform,
+    )
 
     points = voxel_obj.points
     origin = points.min(axis=0)
@@ -98,6 +114,75 @@ def run(
     occupied = int(np.sum(grid[..., 3] > 0))
     log.info(f"Voxel grid: {dims}, occupied: {occupied}")
     return VoxelGrid(grid=grid, resolution=dims)
+
+
+def _detect_hollow(
+    mesh: trimesh.Trimesh,
+    voxel_obj: trimesh.voxel.VoxelGrid,
+) -> bool:
+    """Determine if the mesh is a hollow shell rather than a solid volume.
+
+    Heuristic: voxelize the surface, then fill it. If the filled volume is
+    significantly larger than the surface-only volume, the mesh encloses a
+    hollow interior.
+    """
+    surface_count = int(voxel_obj.matrix.sum())
+    if surface_count < 50:
+        return False
+
+    filled = voxel_obj.fill()
+    filled_count = int(filled.matrix.sum())
+
+    ratio = filled_count / max(surface_count, 1)
+    log.info(f"Hollow detection: surface={surface_count}, filled={filled_count}, ratio={ratio:.2f}")
+
+    # ratio > 1.4 means filling added >40% more voxels → significant interior
+    if ratio > 1.4 and mesh.is_watertight:
+        return True
+    # Even for non-watertight meshes, a very high ratio indicates hollowness
+    if ratio > 2.0:
+        return True
+    return False
+
+
+def _build_shell(
+    surface_matrix: np.ndarray,
+    mesh: trimesh.Trimesh,
+    voxel_obj: trimesh.voxel.VoxelGrid,
+    pitch: float,
+) -> np.ndarray:
+    """Build a voxel shell that is thick enough to have no 1-voxel holes.
+
+    Dilate the surface voxels by 1 in 6-connected directions, then intersect
+    with the filled volume to keep only voxels that are actually inside or on
+    the mesh surface. This gives a 2-3 voxel thick shell with no gaps.
+    """
+    filled = voxel_obj.fill().matrix
+
+    struct = ndimage.generate_binary_structure(3, 1)
+    thickened = ndimage.binary_dilation(surface_matrix, structure=struct, iterations=1)
+
+    shell = thickened & filled
+
+    # Ensure we didn't lose any original surface voxels
+    shell = shell | surface_matrix
+
+    return shell
+
+
+def _seal_surface_gaps(matrix: np.ndarray) -> np.ndarray:
+    """Conservative surface gap sealing.
+
+    Uses a single iteration of morphological closing (6-connected) to seal
+    1-voxel gaps in the surface. Does NOT fill interior holes or do per-slice
+    flood fill — that would destroy hollow structures.
+    """
+    struct = ndimage.generate_binary_structure(3, 1)
+    closed = ndimage.binary_closing(matrix, structure=struct, iterations=1)
+
+    if closed.sum() == matrix.sum():
+        return matrix
+    return closed
 
 
 def _mesh_has_colors(mesh: trimesh.Trimesh) -> bool:
@@ -217,29 +302,6 @@ def _sample_vertex_colors(
         colors[i] = np.clip(bary @ tri_colors, 0, 255).astype(np.uint8)
 
     return colors
-
-
-def _close_gaps(matrix: np.ndarray) -> np.ndarray:
-    """Multi-pass gap filling: morphological closing + per-slice hole fill.
-
-    1. 3D morphological closing (2 iterations, 6-connected) to seal
-       single/double-voxel surface gaps.
-    2. Per-slice (Y-axis) 2D binary fill to close interior holes
-       visible from above or below — these are common in shell meshes
-       from single-image 3D reconstructors.
-    """
-    struct_3d = ndimage.generate_binary_structure(3, 1)
-    closed = ndimage.binary_closing(matrix, structure=struct_3d, iterations=2)
-
-    struct_2d = ndimage.generate_binary_structure(2, 1)
-    for y in range(closed.shape[1]):
-        sl = closed[:, y, :]
-        filled = ndimage.binary_fill_holes(sl, structure=struct_2d)
-        closed[:, y, :] = filled
-
-    if closed.sum() == matrix.sum():
-        return matrix
-    return closed
 
 
 def _barycentric(tri: np.ndarray, pt: np.ndarray) -> np.ndarray:

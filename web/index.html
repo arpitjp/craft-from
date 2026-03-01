@@ -623,53 +623,70 @@ body {
 .sb-arrow.lit { opacity: 0.6; color: var(--green); }
 
 .topbar-right { display: flex; align-items: center; gap: 6px; }
+
+.download-group { position: relative; display: inline-flex; }
+.download-group .btn-dl-main {
+  border-radius: 6px 0 0 6px; padding: 5px 12px; font-size: 10px;
+}
+.download-group .btn-dl-caret {
+  border-radius: 0 6px 6px 0; padding: 5px 6px; font-size: 10px;
+  border-left: 1px solid var(--border); min-width: 0;
+}
+.download-group .btn-dl-caret::after { content: '\25BE'; }
+.dl-dropdown {
+  display: none; position: absolute; top: 100%; right: 0;
+  margin-top: 4px; background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 8px; min-width: 200px; z-index: 200;
+  padding: 6px 0; box-shadow: 0 8px 24px rgba(0,0,0,.5);
+}
+.dl-dropdown.open { display: block; }
+.dl-dropdown .dl-opt {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px; cursor: pointer; font-size: 12px;
+  color: var(--text); transition: background .15s;
+}
+.dl-dropdown .dl-opt:hover { background: var(--surface); color: var(--white); }
+.dl-dropdown .dl-opt .dl-ext { color: var(--muted); font-size: 10px; font-family: monospace; min-width: 70px; }
+.dl-dropdown .dl-sep { height: 1px; background: var(--border); margin: 4px 0; }
+.dl-dropdown .dl-toggle-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 14px; font-size: 12px; color: var(--text);
+}
+.dl-dropdown .dl-toggle-row label { cursor: pointer; display: flex; align-items: center; gap: 8px; }
+
+.toggle-switch {
+  position: relative; width: 32px; height: 18px; flex-shrink: 0;
+}
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-switch .slider {
+  position: absolute; inset: 0; background: var(--border);
+  border-radius: 9px; transition: background .2s; cursor: pointer;
+}
+.toggle-switch .slider::before {
+  content: ''; position: absolute; width: 14px; height: 14px;
+  left: 2px; bottom: 2px; background: var(--white);
+  border-radius: 50%; transition: transform .2s;
+}
+.toggle-switch input:checked + .slider { background: var(--green); }
+.toggle-switch input:checked + .slider::before { transform: translateX(14px); }
+
+.color-toggle-btn {
+  padding: 5px 10px; font-size: 10px; display: flex; align-items: center; gap: 5px;
+}
+.color-toggle-btn .ct-icon {
+  width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--border);
+  background: linear-gradient(135deg, #e25 33%, #4a8 33% 66%, #48f 66%);
+}
+.color-toggle-btn.off .ct-icon {
+  background: var(--muted);
+}
 .topbar-stats {
   font-family: var(--mono); font-size: 10px; color: var(--text3);
   display: flex; gap: 14px;
 }
 .topbar-stats .ts-val { color: var(--white); margin-right: 3px; font-weight: 500; }
 
-/* ═══ Step info strip ═══ */
-.step-info-strip {
-  max-height: 0; overflow: hidden;
-  background: var(--surface2); border-bottom: 1px solid var(--border);
-  transition: max-height 0.3s var(--ease);
-}
-.step-info-strip.open { max-height: 260px; }
-.step-info-inner {
-  display: flex; align-items: flex-start; gap: 14px;
-  padding: 12px 16px; overflow-x: auto;
-}
-.step-info-inner:empty { padding: 0; }
-.step-info-inner::-webkit-scrollbar { height: 4px; }
-.step-info-inner::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-.si-label {
-  font-family: var(--mono); font-size: 10px; color: var(--text3);
-  text-transform: uppercase; letter-spacing: 0.5px;
-  white-space: nowrap; padding-top: 4px; flex-shrink: 0;
-}
-.si-previews {
-  display: flex; gap: 8px; flex-shrink: 0; flex-wrap: wrap;
-}
-.si-previews img {
-  height: 140px; border-radius: 6px; border: 1px solid var(--border);
-  cursor: pointer; transition: border-color 0.15s, transform 0.15s;
-  background: var(--surface);
-}
-.si-previews img:hover { border-color: var(--green); transform: scale(1.03); }
-.si-meta {
-  font-family: var(--mono); font-size: 9px; color: var(--text3);
-  line-height: 1.6; white-space: nowrap; padding-top: 4px; flex-shrink: 0;
-}
-.si-meta strong { color: var(--text2); font-weight: 500; }
-.si-status-tag {
-  display: inline-block; font-size: 8px; padding: 1px 6px;
-  border-radius: 3px; margin-left: 6px;
-}
-.si-status-tag.done { background: var(--green-dim); color: var(--green); }
-.si-status-tag.skipped { background: var(--surface); color: var(--text3); }
-.si-status-tag.active { background: var(--surface3); color: var(--white); }
-.si-status-tag.ready { background: rgba(240,180,50,0.1); color: #f0b432; }
+/* step info now shown in sidebar drawer */
 
 /* ═══ Refine CTA ═══ */
 .refine-cta {
@@ -836,6 +853,11 @@ body {
   max-height: 300px;
   padding: 0 14px 14px;
 }
+.step-card-detail {
+  font-family: var(--mono); font-size: 10px; color: var(--text3);
+  line-height: 1.6; padding: 6px 0 4px;
+}
+.step-card-detail .sd-val { color: var(--text); font-weight: 500; }
 
 .step-card .preview-grid {
   display: flex;
@@ -1050,6 +1072,73 @@ body {
   font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.5px;
 }
 
+/* ═══ History section ═══ */
+.history-section {
+  margin-top: 32px;
+  border-top: 1px solid var(--border);
+  padding-top: 20px;
+}
+.history-section.empty { display: none; }
+.history-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 12px;
+}
+.history-header h3 {
+  font-family: var(--mono); font-size: 12px; font-weight: 500;
+  color: var(--text2); letter-spacing: 0.3px;
+}
+.history-clear-btn {
+  font-family: var(--mono); font-size: 9px;
+  color: var(--text3); background: none; border: 1px solid var(--border);
+  border-radius: 4px; padding: 3px 10px; cursor: pointer;
+  transition: all 0.15s;
+}
+.history-clear-btn:hover { color: var(--red); border-color: var(--red); }
+.history-list { display: flex; flex-direction: column; gap: 6px; }
+
+.history-card {
+  display: flex; align-items: center; gap: 12px;
+  background: rgba(30, 34, 38, 0.5);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s, transform 0.2s var(--spring);
+}
+.history-card:hover {
+  border-color: var(--green);
+  background: rgba(35, 40, 45, 0.7);
+  transform: translateY(-1px);
+}
+.history-thumb {
+  width: 48px; height: 48px; border-radius: 6px;
+  border: 1px solid var(--border); overflow: hidden;
+  flex-shrink: 0; background: var(--surface);
+}
+.history-thumb img {
+  width: 100%; height: 100%; object-fit: cover;
+  display: block;
+}
+.history-info { flex: 1; min-width: 0; }
+.history-info .hi-name {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--white); font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.history-info .hi-meta {
+  font-family: var(--mono); font-size: 9px;
+  color: var(--text3); margin-top: 2px;
+}
+.history-info .hi-meta span { color: var(--text2); }
+.history-remove {
+  flex-shrink: 0; background: none; border: none;
+  color: var(--text3); cursor: pointer; font-size: 14px;
+  padding: 4px; line-height: 1; transition: color 0.15s;
+  opacity: 0; transition: opacity 0.15s, color 0.15s;
+}
+.history-card:hover .history-remove { opacity: 1; }
+.history-remove:hover { color: var(--red); }
+
 /* ═══ Particles — floating embers ═══ */
 .mc-particles { position: fixed; inset: 0; pointer-events: none; z-index: 2; overflow: hidden; }
 .mc-particle {
@@ -1237,6 +1326,14 @@ body {
   <div style="text-align:center">
     <button class="btn btn-primary stagger s6" id="run-btn" disabled>Generate</button>
   </div>
+
+  <div class="history-section empty stagger s6" id="history-section">
+    <div class="history-header">
+      <h3>History</h3>
+      <button class="history-clear-btn" id="history-clear-btn">Clear all</button>
+    </div>
+    <div class="history-list" id="history-list"></div>
+  </div>
 </div>
 </div>
 
@@ -1256,14 +1353,27 @@ body {
     </div>
     <div class="topbar-right">
       <div class="topbar-stats" id="topbar-stats"></div>
-      <button class="btn" id="download-btn2" style="padding:5px 12px;font-size:10px">Download .litematic</button>
+      <button class="btn color-toggle-btn" id="color-toggle-btn" title="Toggle block colors"><span class="ct-icon"></span>Color</button>
+      <div class="download-group">
+        <button class="btn btn-dl-main" id="download-btn2">Download</button>
+        <button class="btn btn-dl-caret" id="download-caret"></button>
+        <div class="dl-dropdown" id="dl-dropdown">
+          <div class="dl-opt" data-fmt="litematic"><span class="dl-ext">.litematic</span> Litematica mod</div>
+          <div class="dl-opt" data-fmt="schem"><span class="dl-ext">.schem</span> WorldEdit / Sponge</div>
+          <div class="dl-opt" data-fmt="schematic"><span class="dl-ext">.schematic</span> MCEdit (legacy)</div>
+          <div class="dl-sep"></div>
+          <div class="dl-toggle-row">
+            <span>Shape only (no color)</span>
+            <label class="toggle-switch">
+              <input type="checkbox" id="dl-colorless">
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
       <button class="btn" id="details-btn" style="padding:5px 12px;font-size:10px">Details</button>
       <button class="btn" id="new-btn2" style="padding:5px 12px;font-size:10px">New</button>
     </div>
-  </div>
-
-  <div class="step-info-strip" id="step-info-strip">
-    <div class="step-info-inner" id="step-info-inner"></div>
   </div>
 
   <div class="viewer-body">
@@ -1887,6 +1997,143 @@ document.getElementById('llm-clear-btn').addEventListener('click', () => {
 
 checkSavedKeys();
 
+/* ═══ History (localStorage) ═══ */
+const HISTORY_KEY = 'craftfrom_history';
+const MAX_HISTORY = 20;
+
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); } catch { return []; }
+}
+
+function saveHistory(list) {
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, MAX_HISTORY))); } catch {}
+}
+
+function addToHistory(jobId, result, meshName) {
+  const list = loadHistory().filter(h => h.id !== jobId);
+  list.unshift({
+    id: jobId,
+    blocks: result.block_count,
+    dims: result.dimensions,
+    mesh: meshName || 'unknown',
+    ts: Date.now(),
+  });
+  saveHistory(list);
+  renderHistory();
+}
+
+function removeFromHistory(jobId) {
+  saveHistory(loadHistory().filter(h => h.id !== jobId));
+  renderHistory();
+}
+
+function clearHistory() {
+  localStorage.removeItem(HISTORY_KEY);
+  renderHistory();
+}
+
+function renderHistory() {
+  const list = loadHistory();
+  const section = document.getElementById('history-section');
+  const container = document.getElementById('history-list');
+  section.classList.toggle('empty', list.length === 0);
+  container.innerHTML = '';
+
+  for (const h of list) {
+    const card = document.createElement('div');
+    card.className = 'history-card';
+    card.dataset.jobId = h.id;
+
+    const thumbUrl = `/api/preview/${h.id}/5_viewer/front.png`;
+    const dims = h.dims ? h.dims.join('\u00d7') : '?';
+    const ago = _timeAgo(h.ts);
+
+    card.innerHTML = `
+      <div class="history-thumb"><img src="${thumbUrl}" alt="" onerror="this.parentElement.innerHTML='&nbsp;'"></div>
+      <div class="history-info">
+        <div class="hi-name">${_escHtml(h.mesh)}</div>
+        <div class="hi-meta"><span>${(h.blocks||0).toLocaleString()}</span> blocks · <span>${dims}</span> · ${ago}</div>
+      </div>
+      <button class="history-remove" title="Remove">&times;</button>`;
+
+    card.querySelector('.history-remove').addEventListener('click', (e) => {
+      e.stopPropagation();
+      removeFromHistory(h.id);
+    });
+
+    card.addEventListener('click', () => restoreJob(h.id));
+    container.appendChild(card);
+  }
+}
+
+function _timeAgo(ts) {
+  const sec = Math.floor((Date.now() - ts) / 1000);
+  if (sec < 60) return 'just now';
+  if (sec < 3600) return Math.floor(sec / 60) + 'm ago';
+  if (sec < 86400) return Math.floor(sec / 3600) + 'h ago';
+  return Math.floor(sec / 86400) + 'd ago';
+}
+
+document.getElementById('history-clear-btn').addEventListener('click', () => {
+  if (confirm('Clear all history?')) clearHistory();
+});
+
+renderHistory();
+
+/* ═══ URL hash routing ═══ */
+function setJobHash(jobId) {
+  history.replaceState(null, '', `#job/${jobId}`);
+}
+
+function clearJobHash() {
+  history.replaceState(null, '', window.location.pathname);
+}
+
+function getJobFromHash() {
+  const m = window.location.hash.match(/^#job\/(.+)$/);
+  return m ? m[1] : null;
+}
+
+/* ═══ Restore a job from history or URL ═══ */
+async function restoreJob(jobId) {
+  try {
+    const resp = await fetch(`/api/job/${jobId}`);
+    const data = await resp.json();
+    if (!data.exists) {
+      removeFromHistory(jobId);
+      clearJobHash();
+      return;
+    }
+
+    currentJobId = jobId;
+    currentLlmInfo = null;
+    _refineLoaded = false;
+    _refinePrompt = '';
+    _refineImageUrls = [];
+
+    switchToViewer();
+    resetStepBar();
+    for (let i = 1; i <= 6; i++) markStepBarDone(i);
+    markStepBarReady(7);
+    closeStepInfo();
+
+    showProgress();
+    ppStepName.textContent = 'Restoring\u2026';
+    ppStepNum.textContent = '';
+    ppBar.style.width = '100%';
+
+    if (data.result) showViewerResult(data.result);
+    setJobHash(jobId);
+    await initViewer(jobId);
+
+    document.getElementById('refine-not-ready').style.display = 'none';
+    document.getElementById('refine-wrap').style.display = 'block';
+  } catch (e) {
+    console.warn('Failed to restore job:', e);
+    clearJobHash();
+  }
+}
+
 /* ═══ Upload ═══ */
 let currentJobId = null, currentLlmInfo = null;
 const meshInput = document.getElementById('mesh-input');
@@ -2043,6 +2290,7 @@ runBtn.addEventListener('click', async () => {
       if (s === 4 && _llmSkipped) markStepBarSkipped(s);
       else markStepBarDone(s);
     });
+    if (d.stage_info) applyStageInfo(d.stage_info);
     if (typeof d.stage === 'number') {
       markStepBarActive(d.stage);
       updateProgress(d.stage, d.done || [], _llmSkipped);
@@ -2057,6 +2305,10 @@ runBtn.addEventListener('click', async () => {
       if (d.llm_info) renderLlmPanel(d.llm_info);
       initViewer(job_id);
       runBtn.textContent='Generate'; runBtn.disabled=false;
+
+      setJobHash(job_id);
+      const meshName = meshInput.files[0]?.name || 'model';
+      addToHistory(job_id, d.result, meshName);
 
       closeStepInfo();
       markStepBarReady(7);
@@ -2076,6 +2328,8 @@ function switchToViewer() {
 function switchToUpload() {
   const u = document.getElementById('app-upload-wrap'), v = document.getElementById('app-viewer');
   v.classList.remove('visible');
+  clearJobHash();
+  renderHistory();
   setTimeout(() => {
     v.classList.remove('active'); u.classList.remove('hidden','leaving'); destroyViewer(); currentLlmInfo=null; _refineLoaded=false; closeStepInfo();
     setTimeout(initHero, 80);
@@ -2090,7 +2344,46 @@ document.getElementById('new-btn2').addEventListener('click', () => {
   imageFn.textContent=''; imageFn.classList.remove('has');
   runBtn.disabled=true; runBtn.classList.remove('ready'); runBtn.textContent='Generate';
 });
-document.getElementById('download-btn2').addEventListener('click', () => { if(currentJobId) window.location.href=`/api/download/${currentJobId}`; });
+/* ═══ Download dropdown ═══ */
+{
+  const dlMain = document.getElementById('download-btn2');
+  const dlCaret = document.getElementById('download-caret');
+  const dlDrop = document.getElementById('dl-dropdown');
+  const dlColorless = document.getElementById('dl-colorless');
+
+  let selectedFmt = 'litematic';
+
+  function closeDlDrop() { dlDrop.classList.remove('open'); }
+
+  dlMain.addEventListener('click', () => {
+    if (!currentJobId) return;
+    const cl = dlColorless.checked ? '&colorless=true' : '';
+    window.location.href = `/api/download/${currentJobId}?format=${selectedFmt}${cl}`;
+  });
+
+  dlCaret.addEventListener('click', (e) => {
+    e.stopPropagation();
+    dlDrop.classList.toggle('open');
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!dlDrop.contains(e.target) && e.target !== dlCaret) closeDlDrop();
+  });
+
+  dlDrop.querySelectorAll('.dl-opt').forEach(opt => {
+    opt.addEventListener('click', () => {
+      selectedFmt = opt.dataset.fmt;
+      dlMain.textContent = `Download .${selectedFmt}`;
+      closeDlDrop();
+      if (currentJobId) {
+        const cl = dlColorless.checked ? '&colorless=true' : '';
+        window.location.href = `/api/download/${currentJobId}?format=${selectedFmt}${cl}`;
+      }
+    });
+  });
+
+  dlColorless.addEventListener('click', (e) => e.stopPropagation());
+}
 
 /* ═══ Step bar ═══ */
 function resetStepBar() {
@@ -2104,7 +2397,7 @@ function resetStepBar() {
     if (i === 7) {
       s.addEventListener('click', () => openManualRefineTab());
     } else {
-      s.addEventListener('click', () => toggleStepInfo(i));
+      s.addEventListener('click', () => toggleDrawerToStep(i));
     }
     bar.appendChild(s); stageStates[i] = 'pending';
   }
@@ -2119,7 +2412,6 @@ function markStepBarActive(st) {
   el.className = 'sb-step active';
   el.querySelector('.sb-icon').innerHTML = '<span class="sb-spinner"></span>';
   updateDrawerStep(st, 'active');
-  if (_openStep === st) renderStepInfo(st);
 }
 
 function markStepBarDone(st) {
@@ -2134,14 +2426,6 @@ function markStepBarDone(st) {
   if (ar && !ar.classList.contains('skipped')) ar.classList.add('lit');
   updateDrawerStep(st, 'done');
   loadDrawerPreviews(st);
-
-  if ((STAGE_PREVIEWS[st] || []).length) {
-    _openStep = st;
-    renderStepInfo(st);
-    siStrip.classList.add('open');
-  } else if (_openStep === st) {
-    renderStepInfo(st);
-  }
 }
 
 function markStepBarSkipped(st) {
@@ -2182,61 +2466,8 @@ function markStepBarError(msg) {
 }
 
 /* ═══ Step info strip ═══ */
-const siStrip = document.getElementById('step-info-strip');
-const siInner = document.getElementById('step-info-inner');
-let _openStep = 0;
-
-const STEP_META = {
-  1: () => 'Converts image/mesh into a 3D model (.glb)',
-  2: () => 'Fills a 3D grid with colored voxel cubes',
-  3: () => 'Maps each voxel to the closest Minecraft block',
-  4: () => currentLlmInfo ? `${currentLlmInfo.provider||'LLM'} \u2014 ${currentLlmInfo.blocks_changed||0} blocks changed` : 'AI-powered block material upgrades',
-  5: () => 'Exports structure as .litematic file',
-  6: () => 'Renders preview images from multiple angles',
-  7: () => 'Manually refine blocks & structure with any LLM',
-};
-
-function toggleStepInfo(st) {
-  if (_openStep === st && siStrip.classList.contains('open')) {
-    siStrip.classList.remove('open');
-    _openStep = 0;
-    return;
-  }
-  _openStep = st;
-  renderStepInfo(st);
-  siStrip.classList.add('open');
-}
-
-function renderStepInfo(st) {
-  const state = stageStates[st] || 'pending';
-  const previews = STAGE_PREVIEWS[st] || [];
-  const metaFn = STEP_META[st];
-
-  let html = `<span class="si-label">${STAGE_NAMES[st]}<span class="si-status-tag ${state}">${state}</span></span>`;
-
-  if (state === 'pending') {
-    html += '<div class="si-meta">Waiting&hellip;</div>';
-  } else {
-    if (state === 'active') {
-      html += '<div class="si-meta"><span class="sb-spinner"></span> Running&hellip;</div>';
-    } else if (metaFn) {
-      html += `<div class="si-meta">${metaFn()}</div>`;
-    }
-    if (previews.length && currentJobId) {
-      html += '<div class="si-previews">';
-      for (const [dir, file] of previews) {
-        html += `<img src="/api/preview/${currentJobId}/${dir}/${file}" alt="${file}" onerror="this.remove()">`;
-      }
-      html += '</div>';
-    }
-  }
-
-  siInner.innerHTML = html;
-}
-
 function closeStepInfo() {
-  siStrip.classList.remove('open');
-  _openStep = 0;
+  // no-op: step info is now in the sidebar
 }
 
 /* ═══ Refine CTA ═══ */
@@ -2298,7 +2529,7 @@ function resetDrawerSteps() {
   }
 }
 
-function updateDrawerStep(st,state,msg) {
+function updateDrawerStep(st, state, msg) {
   const el = document.getElementById(`scc-status-${st}`);
   const card = document.getElementById(`scard-${st}`);
   if (!el) return;
@@ -2307,6 +2538,33 @@ function updateDrawerStep(st,state,msg) {
   else if (state==='skipped') { el.textContent='\u2014 skipped'; card?.classList.add('skipped-card'); }
   else if (state==='ready') { el.textContent='\u270E ready'; card?.classList.add('ready-card'); }
   else if (state==='error') el.textContent='\u2717 '+(msg||'error');
+  if (msg && state === 'done' && card) {
+    let detail = card.querySelector('.step-card-detail');
+    if (!detail) {
+      detail = document.createElement('div');
+      detail.className = 'step-card-detail';
+      card.querySelector('.step-card-body')?.prepend(detail);
+    }
+    detail.innerHTML = msg;
+  }
+}
+
+const STAGE_INFO_RENDER = {
+  1: (i) => `<span class="sd-val">${i.format?.toUpperCase()}</span> mesh · <span class="sd-val">${(i.vertices||0).toLocaleString()}</span> vertices`,
+  2: (i) => `<span class="sd-val">${i.resolution?.join('\u00d7')}</span> grid · <span class="sd-val">${(i.voxels||0).toLocaleString()}</span> voxels`,
+  3: (i) => `<span class="sd-val">${(i.blocks||0).toLocaleString()}</span> blocks · <span class="sd-val">${i.unique_types||0}</span> unique types`,
+  5: (i) => `<span class="sd-val">${(i.blocks||0).toLocaleString()}</span> blocks · <span class="sd-val">${i.dimensions?.join('\u00d7')}</span> · .${i.format||'litematic'}`,
+  6: (i) => `<span class="sd-val">${i.views||0}</span> views rendered`,
+};
+
+function applyStageInfo(info) {
+  for (const [st, data] of Object.entries(info)) {
+    const n = parseInt(st);
+    const renderFn = STAGE_INFO_RENDER[n];
+    if (renderFn && data) {
+      updateDrawerStep(n, 'done', renderFn(data));
+    }
+  }
 }
 
 function loadDrawerPreviews(st) {
@@ -2461,7 +2719,11 @@ manualApply.addEventListener('click', async () => {
     currentLlmInfo = info;
     renderLlmPanel(info);
 
-    if (data.result) showViewerResult(data.result);
+    if (data.result) {
+      showViewerResult(data.result);
+      const hist = loadHistory().find(h => h.id === currentJobId);
+      if (hist) addToHistory(currentJobId, data.result, hist.mesh);
+    }
 
     markStepBarDone(7);
 
@@ -2538,10 +2800,16 @@ function showViewerResult(result) {
   document.getElementById('topbar-stats').innerHTML=`
     <span><span class="ts-val">${result.block_count.toLocaleString()}</span> blocks</span>
     <span><span class="ts-val">${result.dimensions.join('\u00d7')}</span> size</span>`;
+  updateDrawerStep(5, 'done',
+    `<span class="sd-val">${result.block_count.toLocaleString()}</span> blocks exported · ` +
+    `<span class="sd-val">${result.dimensions.join('\u00d7')}</span> dimensions · ` +
+    `.litematic`);
 }
 
 /* ═══ 3D Viewer (via @craftfrom/schema-viewer) ═══ */
 let schemaViewer = null;
+let _viewerData = null;
+let _colorEnabled = true;
 
 function destroyViewer() {
   if (schemaViewer) {
@@ -2552,8 +2820,33 @@ function destroyViewer() {
   if (container) container.innerHTML = '';
 }
 
+function _makeColorlessData(data) {
+  const white = 'minecraft:white_concrete';
+  const mono = [207, 213, 214];
+  const newBlocks = data.blocks.map(([x, y, z]) => [x, y, z, white]);
+  return { blocks: newBlocks, palette: { [white]: mono } };
+}
+
+function _renderViewer(data) {
+  destroyViewer();
+  if (!SchemaViewer) return;
+  const container = document.getElementById('schema-viewer-container');
+  schemaViewer = new SchemaViewer({
+    container,
+    background: '#090b0c',
+    gallery: false,
+    controls: false,
+    tooltip: true,
+    infoBar: false,
+    dragDrop: false,
+  });
+  const renderData = _colorEnabled ? data : _makeColorlessData(data);
+  schemaViewer.addSchematic('result', renderData);
+}
+
 async function initViewer(jobId) {
   destroyViewer();
+  _viewerData = null;
 
   if (!SchemaViewer) {
     console.warn('SchemaViewer not loaded, skipping 3D viewer');
@@ -2561,24 +2854,27 @@ async function initViewer(jobId) {
     return;
   }
 
-  const container = document.getElementById('schema-viewer-container');
-
   const resp = await fetch(`/api/viewer/${jobId}/blocks.json`);
   if (!resp.ok) { console.warn('Job expired or not found'); hideProgress(); return; }
   const data = await resp.json();
   if (data.error || !data.blocks?.length) { console.warn(data.error || 'No blocks'); hideProgress(); return; }
 
-  schemaViewer = new SchemaViewer({
-    container,
-    background: '#090b0c',
-    gallery: false,
-    tooltip: true,
-    infoBar: false,
-    dragDrop: false,
-  });
-
-  schemaViewer.addSchematic('result', data);
+  _viewerData = data;
+  _renderViewer(data);
   hideProgress();
+}
+
+/* ═══ Color toggle ═══ */
+{
+  const colorBtn = document.getElementById('color-toggle-btn');
+  colorBtn.addEventListener('click', () => {
+    _colorEnabled = !_colorEnabled;
+    colorBtn.classList.toggle('off', !_colorEnabled);
+    colorBtn.title = _colorEnabled ? 'Toggle block colors off' : 'Toggle block colors on';
+    const dlCl = document.getElementById('dl-colorless');
+    if (dlCl) dlCl.checked = !_colorEnabled;
+    if (_viewerData) _renderViewer(_viewerData);
+  });
 }
 
 function toggleHud() {
@@ -2590,6 +2886,24 @@ function toggleHud() {
 document.getElementById('hud-toggle').addEventListener('click', toggleHud);
 addEventListener('keydown', e => {
   if (e.key.toLowerCase() === 'h' && !['INPUT','TEXTAREA'].includes(document.activeElement?.tagName)) toggleHud();
+});
+
+/* ═══ Restore from URL hash on page load ═══ */
+{
+  const hashJob = getJobFromHash();
+  if (hashJob) {
+    document.body.classList.add('no-intro');
+    restoreJob(hashJob);
+  }
+}
+
+window.addEventListener('hashchange', () => {
+  const hashJob = getJobFromHash();
+  if (hashJob && hashJob !== currentJobId) {
+    restoreJob(hashJob);
+  } else if (!hashJob && currentJobId) {
+    switchToUpload();
+  }
 });
 
 /* ═══ Floating particles ═══ */

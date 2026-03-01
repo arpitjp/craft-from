@@ -21,9 +21,9 @@ from api.utils.logging import get_logger
 
 log = get_logger(__name__)
 
-_HUE_PENALTY_WEIGHT = 8.0
-_CHROMA_THRESHOLD = 10.0
-_K_CANDIDATES = 5
+_HUE_PENALTY_WEIGHT = 12.0
+_CHROMA_THRESHOLD = 8.0
+_K_CANDIDATES = 8
 
 
 def _rgb_to_lab(rgb: np.ndarray) -> np.ndarray:
@@ -122,13 +122,18 @@ def run(voxel_grid: VoxelGrid, config: PipelineConfig) -> BlockGrid:
     indices = _hue_aware_match(voxel_labs, tree, block_colors_lab)
 
     raw_block_at: dict[tuple, int] = {}
+    color_at: dict[tuple, np.ndarray] = {}
     positions: list[tuple] = []
     for i in range(len(occupied[0])):
         x, y, z = int(occupied[0][i]), int(occupied[1][i]), int(occupied[2][i])
         raw_block_at[(x, y, z)] = int(indices[i])
+        color_at[(x, y, z)] = voxel_labs[i]
         positions.append((x, y, z))
 
-    smoothed = _spatial_mode_filter(raw_block_at, positions, radius=2, passes=3)
+    smoothed = _color_aware_mode_filter(
+        raw_block_at, color_at, positions, block_colors_lab,
+        radius=1, passes=2,
+    )
 
     for pos in positions:
         idx = smoothed[pos]
@@ -151,23 +156,27 @@ def run(voxel_grid: VoxelGrid, config: PipelineConfig) -> BlockGrid:
     )
 
 
-def _spatial_mode_filter(
+def _color_aware_mode_filter(
     block_at: dict[tuple, int],
+    color_at: dict[tuple, np.ndarray],
     positions: list[tuple],
-    radius: int = 2,
-    passes: int = 3,
+    palette_labs: np.ndarray,
+    radius: int = 1,
+    passes: int = 2,
 ) -> dict[tuple, int]:
-    """Replace each block's palette index with the most common index in its
-    local neighborhood (Chebyshev cube of given radius). Multiple passes
-    propagate consensus outward, eliminating salt-and-pepper noise from
-    per-voxel color matching.
+    """Smoothing filter that only unifies blocks when their original voxel
+    colors are similar. Prevents the old problem where large regions got
+    flattened to one block type because the pure mode filter ignored color.
 
-    This is the standard approach for voxel art: individual color matching
-    picks the closest palette entry per voxel, but adjacent voxels with
-    slightly different texture colors land on different-but-similar blocks.
-    The mode filter unifies them.
+    For each voxel, we look at the 6-connected neighborhood (radius=1) and
+    collect neighbor block indices. We only switch to a neighbor's block if:
+      1. That block is the neighborhood majority, AND
+      2. The LAB distance between this voxel's color and the candidate
+         palette color is within a tolerance of the current best match.
     """
     from collections import Counter
+
+    _COLOR_TOLERANCE = 8.0
 
     occupied = set(block_at.keys())
     current = dict(block_at)
@@ -177,6 +186,7 @@ def _spatial_mode_filter(
         for dx in range(-radius, radius + 1)
         for dy in range(-radius, radius + 1)
         for dz in range(-radius, radius + 1)
+        if not (dx == 0 and dy == 0 and dz == 0)
     ]
 
     candidates = set(positions)
@@ -192,8 +202,18 @@ def _spatial_mode_filter(
                 if npos in current:
                     counts[current[npos]] += 1
 
+            if not counts:
+                continue
+
             mode_idx = counts.most_common(1)[0][0]
-            if mode_idx != current[pos]:
+            if mode_idx == current[pos]:
+                continue
+
+            voxel_lab = color_at[pos]
+            current_dist = np.linalg.norm(palette_labs[current[pos]] - voxel_lab)
+            candidate_dist = np.linalg.norm(palette_labs[mode_idx] - voxel_lab)
+
+            if candidate_dist <= current_dist + _COLOR_TOLERANCE:
                 updated[pos] = mode_idx
                 changed += 1
                 for dx, dy, dz in offsets:
@@ -205,7 +225,7 @@ def _spatial_mode_filter(
         if changed == 0:
             break
         candidates = next_candidates
-        log.info(f"Mode filter pass {p+1}: {changed} blocks changed")
+        log.info(f"Color-aware filter pass {p+1}: {changed} blocks changed")
 
     return current
 

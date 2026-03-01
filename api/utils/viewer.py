@@ -117,15 +117,15 @@ def compare_views(
     output_path: str,
 ):
     """Side-by-side comparison of voxel color preview vs litematic render."""
-    img_a = Image.open(voxel_front).convert("RGB")
-    img_b = Image.open(viewer_front).convert("RGB")
+    img_a = Image.open(voxel_front).convert("RGBA")
+    img_b = Image.open(viewer_front).convert("RGBA")
 
     h = max(img_a.height, img_b.height)
     img_a = img_a.resize((int(img_a.width * h / img_a.height), h), Image.NEAREST)
     img_b = img_b.resize((int(img_b.width * h / img_b.height), h), Image.NEAREST)
 
     gap = 20
-    combined = Image.new("RGB", (img_a.width + gap + img_b.width, h), (255, 255, 255))
+    combined = Image.new("RGBA", (img_a.width + gap + img_b.width, h), (0, 0, 0, 0))
     combined.paste(img_a, (0, 0))
     combined.paste(img_b, (img_a.width + gap, 0))
     combined.save(output_path)
@@ -150,32 +150,26 @@ def _render_orthographic(
     h = grid_occ.shape[v_ax]
     depth = grid_occ.shape[d_ax]
 
-    img = np.full((h, w, 3), 240, dtype=np.uint8)
+    img = np.zeros((h, w, 4), dtype=np.uint8)
     d_range = range(depth) if d_dir == 1 else range(depth - 1, -1, -1)
 
     for d in d_range:
-        idx = [slice(None)] * 3
-        idx[d_ax] = d
-        layer_occ = grid_occ[tuple(idx)]
-        layer_rgb = grid_rgb[tuple(idx)]
-
         for u in range(w):
             for v in range(h):
-                coord = [0, 0]
                 coord_idx = [0, 0, 0]
                 coord_idx[h_ax] = u
                 coord_idx[v_ax] = v
                 coord_idx[d_ax] = d
                 if grid_occ[coord_idx[0], coord_idx[1], coord_idx[2]]:
-                    if img[v, u, 0] == 240 and img[v, u, 1] == 240 and img[v, u, 2] == 240:
+                    if img[v, u, 3] == 0:
                         rgb = grid_rgb[coord_idx[0], coord_idx[1], coord_idx[2]]
-                        img[v, u] = rgb
+                        img[v, u] = [rgb[0], rgb[1], rgb[2], 255]
 
     if flip_v:
         img = np.flipud(img)
 
     scale = max(1, 800 // max(w, h))
-    out_img = Image.fromarray(img).resize((w * scale, h * scale), Image.NEAREST)
+    out_img = Image.fromarray(img, "RGBA").resize((w * scale, h * scale), Image.NEAREST)
     path = output_dir / f"{label}.png"
     out_img.save(str(path))
     return path
